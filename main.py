@@ -68,6 +68,20 @@ _DOMAIN_MAP: dict[str, Domain] = {
     "physics": Domain.PHYSICS,
     "dl": Domain.DEEP_LEARNING,
     "deep_learning": Domain.DEEP_LEARNING,
+    # High-economic-value industry domains
+    "healthcare": Domain.HEALTHCARE,
+    "climate": Domain.CLIMATE_ENERGY,
+    "climate_energy": Domain.CLIMATE_ENERGY,
+    "finance": Domain.FINANCE_ECONOMICS,
+    "finance_economics": Domain.FINANCE_ECONOMICS,
+    "economics": Domain.FINANCE_ECONOMICS,
+    "cybersecurity": Domain.CYBERSECURITY,
+    "cyber": Domain.CYBERSECURITY,
+    "biotech": Domain.BIOTECH_GENOMICS,
+    "genomics": Domain.BIOTECH_GENOMICS,
+    "biotech_genomics": Domain.BIOTECH_GENOMICS,
+    "supply_chain": Domain.SUPPLY_CHAIN,
+    "logistics": Domain.SUPPLY_CHAIN,
 }
 
 

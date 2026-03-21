@@ -95,6 +95,13 @@ _DOMAIN_SIGNALS: dict[Domain, list[str]] = {
     Domain.SPACE_SCIENCE: ["space", "star", "planet", "galaxy", "universe"],
     Domain.PHYSICS: ["energy", "force", "quantum", "particle", "wave"],
     Domain.DEEP_LEARNING: ["learning", "model", "training", "deep", "transformer"],
+    # High-economic-value industry domains
+    Domain.HEALTHCARE: ["disease", "drug", "patient", "clinical", "diagnosis", "therapy"],
+    Domain.CLIMATE_ENERGY: ["climate", "carbon", "renewable", "energy", "emission", "solar"],
+    Domain.FINANCE_ECONOMICS: ["market", "risk", "finance", "economic", "investment", "capital"],
+    Domain.CYBERSECURITY: ["security", "attack", "vulnerability", "threat", "encrypt", "cyber"],
+    Domain.BIOTECH_GENOMICS: ["gene", "genome", "protein", "crispr", "cell", "biotech"],
+    Domain.SUPPLY_CHAIN: ["supply", "logistics", "inventory", "demand", "shipping", "warehouse"],
 }
 
 

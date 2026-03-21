@@ -9,6 +9,13 @@ from src.agents.neural_networks_agent import NeuralNetworksAgent
 from src.agents.physics_agent import PhysicsAgent
 from src.agents.social_science_agent import SocialScienceAgent
 from src.agents.space_science_agent import SpaceScienceAgent
+# High-economic-value industry agents
+from src.agents.healthcare_agent import HealthcareAgent
+from src.agents.climate_energy_agent import ClimateEnergyAgent
+from src.agents.finance_economics_agent import FinanceEconomicsAgent
+from src.agents.cybersecurity_agent import CybersecurityAgent
+from src.agents.biotech_genomics_agent import BiotechGenomicsAgent
+from src.agents.supply_chain_agent import SupplyChainAgent
 from src.models import AgentResponse, Domain
 
 
@@ -20,6 +27,12 @@ ALL_AGENT_CLASSES = [
     SpaceScienceAgent,
     PhysicsAgent,
     DeepLearningAgent,
+    HealthcareAgent,
+    ClimateEnergyAgent,
+    FinanceEconomicsAgent,
+    CybersecurityAgent,
+    BiotechGenomicsAgent,
+    SupplyChainAgent,
 ]
 
 EXPECTED_DOMAINS = [
@@ -30,6 +43,12 @@ EXPECTED_DOMAINS = [
     Domain.SPACE_SCIENCE,
     Domain.PHYSICS,
     Domain.DEEP_LEARNING,
+    Domain.HEALTHCARE,
+    Domain.CLIMATE_ENERGY,
+    Domain.FINANCE_ECONOMICS,
+    Domain.CYBERSECURITY,
+    Domain.BIOTECH_GENOMICS,
+    Domain.SUPPLY_CHAIN,
 ]
 
 

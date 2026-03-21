@@ -22,6 +22,13 @@ from src.agents.neural_networks_agent import NeuralNetworksAgent
 from src.agents.physics_agent import PhysicsAgent
 from src.agents.social_science_agent import SocialScienceAgent
 from src.agents.space_science_agent import SpaceScienceAgent
+# High-economic-value industry agents
+from src.agents.healthcare_agent import HealthcareAgent
+from src.agents.climate_energy_agent import ClimateEnergyAgent
+from src.agents.finance_economics_agent import FinanceEconomicsAgent
+from src.agents.cybersecurity_agent import CybersecurityAgent
+from src.agents.biotech_genomics_agent import BiotechGenomicsAgent
+from src.agents.supply_chain_agent import SupplyChainAgent
 from src.analysis.weighing_system import WeighingSystem
 from src.intuition.human_intuition import IntuitionCapture
 from src.llm.base import LLMBackend
@@ -42,6 +49,13 @@ _AGENT_CLASSES: dict[Domain, type[BaseAgent]] = {
     Domain.SPACE_SCIENCE: SpaceScienceAgent,
     Domain.PHYSICS: PhysicsAgent,
     Domain.DEEP_LEARNING: DeepLearningAgent,
+    # High-economic-value industry agents
+    Domain.HEALTHCARE: HealthcareAgent,
+    Domain.CLIMATE_ENERGY: ClimateEnergyAgent,
+    Domain.FINANCE_ECONOMICS: FinanceEconomicsAgent,
+    Domain.CYBERSECURITY: CybersecurityAgent,
+    Domain.BIOTECH_GENOMICS: BiotechGenomicsAgent,
+    Domain.SUPPLY_CHAIN: SupplyChainAgent,
 }
 
 

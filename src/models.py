@@ -17,6 +17,13 @@ class Domain(str, Enum):
     SPACE_SCIENCE = "space_science"
     PHYSICS = "physics"
     DEEP_LEARNING = "deep_learning"
+    # High-economic-value industry domains
+    HEALTHCARE = "healthcare"
+    CLIMATE_ENERGY = "climate_energy"
+    FINANCE_ECONOMICS = "finance_economics"
+    CYBERSECURITY = "cybersecurity"
+    BIOTECH_GENOMICS = "biotech_genomics"
+    SUPPLY_CHAIN = "supply_chain"
 
 
 @dataclass

@@ -58,6 +58,43 @@ _DOMAIN_KEYWORDS: dict[Domain, list[str]] = {
         "pretrain", "foundation model", "diffusion", "generative", "llama",
         "reinforcement learning", "rlhf", "lora", "bert", "token",
     ],
+    # High-economic-value industry domains
+    Domain.HEALTHCARE: [
+        "disease", "drug", "medicine", "patient", "clinical", "diagnosis",
+        "therapy", "treatment", "hospital", "pharma", "cancer", "vaccine",
+        "genomic", "biomarker", "trial", "dose", "symptom", "surgery",
+        "health", "epidemic", "public health", "imaging", "radiology",
+    ],
+    Domain.CLIMATE_ENERGY: [
+        "climate", "carbon", "emission", "greenhouse", "renewable", "solar",
+        "wind", "battery", "storage", "grid", "decarbonisation", "net zero",
+        "fossil fuel", "clean energy", "hydrogen", "capture", "warming",
+        "temperature", "sea level", "electricity", "power", "energy transition",
+    ],
+    Domain.FINANCE_ECONOMICS: [
+        "market", "risk", "finance", "economic", "investment", "capital",
+        "portfolio", "asset", "equity", "bond", "derivative", "hedge",
+        "monetary", "inflation", "interest rate", "bank", "credit", "liquidity",
+        "gdp", "fiscal", "arbitrage", "quant", "trading", "valuation",
+    ],
+    Domain.CYBERSECURITY: [
+        "security", "attack", "vulnerability", "threat", "encrypt", "cyber",
+        "malware", "ransomware", "phishing", "firewall", "intrusion",
+        "exploit", "zero-day", "authentication", "cryptography", "hack",
+        "breach", "privacy", "compliance", "password", "certificate",
+    ],
+    Domain.BIOTECH_GENOMICS: [
+        "gene", "genome", "protein", "crispr", "cell", "biotech",
+        "dna", "rna", "sequencing", "mutation", "chromosome", "allele",
+        "expression", "stem cell", "therapy", "synthetic biology", "enzyme",
+        "amino acid", "folding", "omics", "microbiome", "bioinformatics",
+    ],
+    Domain.SUPPLY_CHAIN: [
+        "supply", "logistics", "inventory", "demand", "shipping", "warehouse",
+        "procurement", "sourcing", "distribution", "fulfillment", "route",
+        "lead time", "stock", "vendor", "delivery", "freight", "last mile",
+        "operations", "forecast", "resilience", "disruption", "manufacturing",
+    ],
 }
 
 

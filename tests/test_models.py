@@ -21,6 +21,13 @@ class TestDomain:
             "space_science",
             "physics",
             "deep_learning",
+            # High-economic-value industry domains
+            "healthcare",
+            "climate_energy",
+            "finance_economics",
+            "cybersecurity",
+            "biotech_genomics",
+            "supply_chain",
         }
         assert {d.value for d in Domain} == expected
 

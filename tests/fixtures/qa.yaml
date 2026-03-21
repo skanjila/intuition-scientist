@@ -97,3 +97,134 @@
       help agents explore efficiently without needing dense external rewards.
   domains: [deep_learning, computer_science]
   expected_keywords: [exploration, exploitation, reward, epsilon]
+
+# ---------------------------------------------------------------------------
+# High-economic-value industry domain Q/A pairs
+# ---------------------------------------------------------------------------
+
+- id: drug_discovery_ai
+  question: >
+    How can artificial intelligence accelerate the drug discovery pipeline,
+    and what are the main bottlenecks that remain?
+  intuition:
+    answer: >
+      AI can compress the hit identification and lead optimisation phases by
+      predicting binding affinities, ADMET properties, and synthesisability.
+      Generative models can propose novel chemical scaffolds. Key bottlenecks
+      remain: wet-lab validation throughput, limited labelled clinical data,
+      and translational failures from animal models to humans.
+    confidence: 0.72
+    reasoning: >
+      Historical drug development takes 10-15 years and $2.6 billion per
+      approved drug. AI-assisted screening can cut costs in the preclinical
+      phase, but Phase II/III failures remain high (~90%) because biology
+      in real patients differs from in-vitro or animal models.
+  domains: [healthcare, biotech_genomics]
+  expected_keywords: [drug, discovery, clinical, binding, scaffolds]
+
+- id: climate_tipping_points
+  question: >
+    What are climate tipping points, how close are we to triggering them,
+    and what would be the economic consequences?
+  intuition:
+    answer: >
+      Climate tipping points are self-reinforcing thresholds—such as Arctic
+      sea-ice loss, Amazon dieback, or West Antarctic ice sheet collapse—beyond
+      which change becomes irreversible. Current warming (~1.2°C) may already
+      be close to several tipping points. Economic damages could reach tens of
+      trillions of dollars through sea-level rise, agricultural failure, and
+      forced migration.
+    confidence: 0.70
+    reasoning: >
+      The IPCC AR6 identifies multiple interacting tipping elements. At 1.5°C
+      several low-likelihood high-impact risks emerge. The economic literature
+      (Stern, Nordhaus, Burke) estimates non-linear damage functions suggesting
+      damages accelerate sharply above 2°C.
+  domains: [climate_energy, physics]
+  expected_keywords: [tipping, warming, economic, sea-level]
+
+- id: systemic_financial_risk
+  question: >
+    What mechanisms cause systemic financial crises, and how can regulators
+    design more resilient financial systems?
+  intuition:
+    answer: >
+      Systemic crises arise from interconnectedness (contagion), leverage
+      amplification, liquidity spirals, and common exposures that cause
+      simultaneous failures across institutions. Resilience requires
+      countercyclical capital buffers, macro-prudential oversight, central
+      clearing for derivatives, and better stress-testing that captures
+      network effects.
+    confidence: 0.73
+    reasoning: >
+      The 2008 crisis illustrated how mortgage-backed securities created
+      hidden interconnections. Fire-sale dynamics and funding freezes amplified
+      losses. Basel III improved capital requirements but systemic risk in
+      non-bank financial institutions (shadow banking) remains underregulated.
+  domains: [finance_economics, social_science]
+  expected_keywords: [systemic, risk, capital, leverage, financial]
+
+- id: ransomware_critical_infrastructure
+  question: >
+    Why are critical infrastructure operators disproportionately targeted by
+    ransomware, and what technical and policy interventions are most effective?
+  intuition:
+    answer: >
+      Critical infrastructure (energy, water, hospitals) is targeted because
+      operators have low tolerance for downtime, making ransom payment more
+      likely, and because legacy OT/ICS systems are poorly patched and isolated
+      from modern security controls. Effective interventions include network
+      segmentation between IT and OT, immutable offline backups, mandatory
+      incident reporting, and international law enforcement cooperation.
+    confidence: 0.69
+    reasoning: >
+      Colonial Pipeline and WannaCry hospital attacks demonstrated the
+      disproportionate leverage attackers have over operators who cannot afford
+      downtime. Many ICS systems run decades-old firmware and cannot be easily
+      patched, making defence-in-depth and resilience planning more important
+      than patching alone.
+  domains: [cybersecurity, computer_science]
+  expected_keywords: [ransomware, infrastructure, backup, segmentation, security]
+
+- id: crispr_therapeutics
+  question: >
+    What are the most promising near-term clinical applications of CRISPR
+    gene editing, and what safety challenges must be resolved first?
+  intuition:
+    answer: >
+      Near-term CRISPR applications include sickle cell disease and beta-
+      thalassaemia (ex-vivo editing of haematopoietic stem cells, already in
+      trials), and in-vivo liver-targeted therapies for transthyretin
+      amyloidosis. Safety challenges include off-target edits, delivery to
+      the right tissues, immune responses to Cas9, and long-term genotoxicity
+      monitoring.
+    confidence: 0.75
+    reasoning: >
+      Vertex/CRISPR Therapeutics received FDA approval for Casgevy in 2023 for
+      sickle cell disease. However, off-target editing can cause insertional
+      mutagenesis. In-vivo delivery to non-hepatic tissues remains technically
+      challenging, limiting short-term applications to accessible cell types.
+  domains: [biotech_genomics, healthcare]
+  expected_keywords: [crispr, gene, editing, therapy, safety]
+
+- id: supply_chain_resilience
+  question: >
+    How should multinational companies redesign their supply chains to balance
+    cost efficiency with resilience after the disruptions of the 2020s?
+  intuition:
+    answer: >
+      Companies should adopt a hybrid strategy: maintain lean just-in-time
+      flows for predictable commodities while building strategic buffers and
+      dual-sourcing for critical inputs. Near-shoring or friend-shoring reduces
+      geopolitical exposure, while digital twins and real-time sensor data
+      improve visibility and allow faster response to disruptions.
+    confidence: 0.71
+    reasoning: >
+      COVID-19 and the Suez Canal blockage exposed single-source dependencies
+      and long-distance concentration risk. The cost of resilience measures
+      (safety stock, dual sourcing) is often outweighed by the cost of a single
+      major disruption event. Digital supply chain visibility tools have matured
+      rapidly and offer near real-time monitoring.
+  domains: [supply_chain, finance_economics]
+  expected_keywords: [supply, resilience, sourcing, disruption, inventory]
+
