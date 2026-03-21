@@ -95,6 +95,57 @@ _DOMAIN_KEYWORDS: dict[Domain, list[str]] = {
         "lead time", "stock", "vendor", "delivery", "freight", "last mile",
         "operations", "forecast", "resilience", "disruption", "manufacturing",
     ],
+    # Enterprise problem domains
+    Domain.LEGAL_COMPLIANCE: [
+        "contract", "legal", "compliance", "regulation", "law", "liability",
+        "intellectual property", "patent", "trademark", "copyright", "gdpr",
+        "sox", "hipaa", "litigation", "arbitration", "indemnification",
+        "governance", "fiduciary", "regulatory", "audit", "policy",
+    ],
+    Domain.ENTERPRISE_ARCHITECTURE: [
+        "architecture", "microservice", "cloud", "kubernetes", "docker",
+        "api", "platform", "technical debt", "migration", "integration",
+        "data mesh", "event-driven", "ddd", "cqrs", "service mesh",
+        "infrastructure", "devops", "devsecops", "observability", "sre",
+    ],
+    Domain.MARKETING_GROWTH: [
+        "marketing", "growth", "customer", "acquisition", "retention",
+        "conversion", "funnel", "attribution", "clv", "cac", "churn",
+        "brand", "campaign", "segment", "pricing", "revenue", "demand gen",
+        "seo", "content", "product-led", "viral", "paid media",
+    ],
+    Domain.ORGANIZATIONAL_BEHAVIOR: [
+        "organisation", "culture", "talent", "workforce", "leadership",
+        "team", "performance", "engagement", "motivation", "hiring",
+        "retention", "succession", "diversity", "inclusion", "coaching",
+        "change management", "communication", "collaboration", "wellbeing",
+    ],
+    Domain.STRATEGY_INTELLIGENCE: [
+        "strategy", "competitive", "market", "positioning", "moat",
+        "competitive advantage", "m&a", "acquisition", "merger", "scenario",
+        "porter", "value chain", "disruption", "business model", "innovation",
+        "intelligence", "intelligence gathering", "swot", "pestle",
+    ],
+    # Mastery / interview / PhD research domains
+    Domain.ALGORITHMS_PROGRAMMING: [
+        "algorithm", "data structure", "python", "rust", "golang", "go",
+        "complexity", "big-o", "dynamic programming", "graph", "tree",
+        "sorting", "binary search", "recursion", "pointer", "iterator",
+        "ownership", "borrow", "goroutine", "channel", "async", "concurrency",
+    ],
+    Domain.INTERVIEW_PREP: [
+        "interview", "leetcode", "system design", "faang", "google", "meta",
+        "amazon", "apple", "microsoft", "coding", "behavioral", "star",
+        "whiteboard", "offer", "technical screen", "oa", "online assessment",
+        "two pointer", "sliding window", "backtracking", "dp pattern",
+    ],
+    Domain.EE_LLM_RESEARCH: [
+        "llm", "signal processing", "safety", "alignment", "transformer",
+        "phd", "research", "dissertation", "paper", "publication", "fft",
+        "filter", "spectrum", "modulation", "jailbreak", "interpretability",
+        "mechanistic", "rlhf", "dpo", "fine-tuning", "inference", "training",
+        "hallucination", "red team", "watermark", "sparse autoencoder",
+    ],
 }
 
 

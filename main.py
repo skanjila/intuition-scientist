@@ -55,6 +55,7 @@ except ImportError:
 from src.models import Domain, WeighingResult
 
 _DOMAIN_MAP: dict[str, Domain] = {
+    # Core science / engineering
     "ee": Domain.ELECTRICAL_ENGINEERING,
     "electrical_engineering": Domain.ELECTRICAL_ENGINEERING,
     "cs": Domain.COMPUTER_SCIENCE,
@@ -82,6 +83,33 @@ _DOMAIN_MAP: dict[str, Domain] = {
     "biotech_genomics": Domain.BIOTECH_GENOMICS,
     "supply_chain": Domain.SUPPLY_CHAIN,
     "logistics": Domain.SUPPLY_CHAIN,
+    # Enterprise problem domains
+    "legal": Domain.LEGAL_COMPLIANCE,
+    "legal_compliance": Domain.LEGAL_COMPLIANCE,
+    "compliance": Domain.LEGAL_COMPLIANCE,
+    "architecture": Domain.ENTERPRISE_ARCHITECTURE,
+    "enterprise_architecture": Domain.ENTERPRISE_ARCHITECTURE,
+    "marketing": Domain.MARKETING_GROWTH,
+    "marketing_growth": Domain.MARKETING_GROWTH,
+    "growth": Domain.MARKETING_GROWTH,
+    "org": Domain.ORGANIZATIONAL_BEHAVIOR,
+    "organizational_behavior": Domain.ORGANIZATIONAL_BEHAVIOR,
+    "hr": Domain.ORGANIZATIONAL_BEHAVIOR,
+    "strategy": Domain.STRATEGY_INTELLIGENCE,
+    "strategy_intelligence": Domain.STRATEGY_INTELLIGENCE,
+    "intel": Domain.STRATEGY_INTELLIGENCE,
+    # Mastery / interview / PhD research domains
+    "algorithms": Domain.ALGORITHMS_PROGRAMMING,
+    "algo": Domain.ALGORITHMS_PROGRAMMING,
+    "algorithms_programming": Domain.ALGORITHMS_PROGRAMMING,
+    "programming": Domain.ALGORITHMS_PROGRAMMING,
+    "interview": Domain.INTERVIEW_PREP,
+    "interview_prep": Domain.INTERVIEW_PREP,
+    "faang": Domain.INTERVIEW_PREP,
+    "ee_llm": Domain.EE_LLM_RESEARCH,
+    "ee_llm_research": Domain.EE_LLM_RESEARCH,
+    "phd": Domain.EE_LLM_RESEARCH,
+    "llm_safety": Domain.EE_LLM_RESEARCH,
 }
 
 

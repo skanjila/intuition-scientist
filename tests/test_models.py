@@ -14,6 +14,7 @@ from src.models import (
 class TestDomain:
     def test_all_domains_present(self):
         expected = {
+            # Core science / engineering
             "electrical_engineering",
             "computer_science",
             "neural_networks",
@@ -28,6 +29,16 @@ class TestDomain:
             "cybersecurity",
             "biotech_genomics",
             "supply_chain",
+            # Enterprise problem domains
+            "legal_compliance",
+            "enterprise_architecture",
+            "marketing_growth",
+            "organizational_behavior",
+            "strategy_intelligence",
+            # Mastery / interview / PhD research domains
+            "algorithms_programming",
+            "interview_prep",
+            "ee_llm_research",
         }
         assert {d.value for d in Domain} == expected
 

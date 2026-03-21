@@ -102,6 +102,16 @@ _DOMAIN_SIGNALS: dict[Domain, list[str]] = {
     Domain.CYBERSECURITY: ["security", "attack", "vulnerability", "threat", "encrypt", "cyber"],
     Domain.BIOTECH_GENOMICS: ["gene", "genome", "protein", "crispr", "cell", "biotech"],
     Domain.SUPPLY_CHAIN: ["supply", "logistics", "inventory", "demand", "shipping", "warehouse"],
+    # Enterprise problem domains
+    Domain.LEGAL_COMPLIANCE: ["legal", "contract", "compliance", "regulation", "law", "risk"],
+    Domain.ENTERPRISE_ARCHITECTURE: ["architecture", "system", "cloud", "microservice", "platform", "technical"],
+    Domain.MARKETING_GROWTH: ["marketing", "customer", "growth", "acquisition", "revenue", "brand"],
+    Domain.ORGANIZATIONAL_BEHAVIOR: ["organisation", "talent", "culture", "leadership", "workforce", "team"],
+    Domain.STRATEGY_INTELLIGENCE: ["strategy", "competitive", "market", "advantage", "positioning", "innovation"],
+    # Mastery / interview / PhD research domains
+    Domain.ALGORITHMS_PROGRAMMING: ["algorithm", "python", "rust", "golang", "data structure", "complexity"],
+    Domain.INTERVIEW_PREP: ["interview", "leetcode", "system design", "faang", "coding", "behavioral"],
+    Domain.EE_LLM_RESEARCH: ["llm", "signal processing", "safety", "alignment", "transformer", "phd"],
 }
 
 
