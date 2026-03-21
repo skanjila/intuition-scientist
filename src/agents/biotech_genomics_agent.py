@@ -26,7 +26,7 @@ class BiotechGenomicsAgent(BaseAgent):
             "- Protein science: structure prediction (AlphaFold2/3, ESMFold), directed\n"
             "  evolution, enzyme engineering, de novo protein design, proteomics\n"
             "- Cell and gene therapy: CAR-T, TCR-T, stem cell therapies, in-vivo vs.\n"
-            "  ex-vivo approaches, manufacturing scale-up, regulatory landscape\n"
+            "  ex vivo approaches, manufacturing scale-up, regulatory landscape\n"
             "- Synthetic biology: genetic circuit design, metabolic engineering,\n"
             "  cell-free systems, biofoundries, biosensors, living therapeutics\n"
             "- Agricultural biotech: GM crops, RNA interference bioprotection, nitrogen\n"

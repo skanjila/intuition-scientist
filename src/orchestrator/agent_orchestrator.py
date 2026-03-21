@@ -59,6 +59,8 @@ from src.models import (
     Domain,
     HumanIntuition,
     InterviewResult,
+    ModelEvaluationResult,
+    ModelRunResult,
     WeighingResult,
 )
 
@@ -290,6 +292,182 @@ class AgentOrchestrator:
             synthesized_answer=weighing.synthesized_answer,
             recommendations=weighing.recommendations,
         )
+
+    # ------------------------------------------------------------------
+    # Model cycling / evaluation entry point
+    # ------------------------------------------------------------------
+
+    def evaluate_models(
+        self,
+        question: str,
+        model_specs: list[str],
+        *,
+        prefilled_intuition: Optional[HumanIntuition] = None,
+        domains: Optional[list[Domain]] = None,
+    ) -> ModelEvaluationResult:
+        """Cycle through *model_specs* and evaluate each against *question*.
+
+        For every model backend the full dual-pipeline runs:
+        human intuition → domain agents (intuition + MCP) → WeighingSystem.
+
+        Models that are unavailable (server down, missing API key, etc.) are
+        recorded as unavailable and skipped gracefully — they never cause the
+        whole evaluation to fail.
+
+        Parameters
+        ----------
+        question:
+            The question to investigate across all models.
+        model_specs:
+            List of provider spec strings, e.g.
+            ``["mock", "ollama:llama3.1:8b", "groq:llama-3.1-8b-instant"]``.
+        prefilled_intuition:
+            Human intuition to use for all runs.  When ``None`` the user is
+            prompted interactively on the **first** run; subsequent runs reuse
+            the same intuition so the comparison is fair.
+        domains:
+            Explicit domain list; auto-detected when ``None``.
+
+        Returns
+        -------
+        ModelEvaluationResult
+            Per-model results plus cross-model consensus and divergence.
+        """
+        import time
+
+        # Capture intuition once (interactively if needed) so all model runs
+        # see the same human input and results are comparable.
+        intuition = self._intuition_capture.capture(
+            question, prefilled=prefilled_intuition
+        )
+        selected_domains = domains or self._select_domains(question, intuition)
+
+        run_results: list[ModelRunResult] = []
+
+        for spec in model_specs:
+            t0 = time.monotonic()
+            try:
+                candidate_backend = get_backend(spec)
+            except ValueError as exc:
+                run_results.append(ModelRunResult(
+                    model_spec=spec,
+                    backend_available=False,
+                    weighing_result=None,
+                    error=f"Invalid spec: {exc}",
+                ))
+                continue
+
+            try:
+                # Spin up a temporary orchestrator with this backend
+                tmp_orch = AgentOrchestrator(
+                    backend=candidate_backend,
+                    use_mcp=self.use_mcp,
+                    max_domains=self.max_domains,
+                )
+                result = tmp_orch.run(
+                    question,
+                    prefilled_intuition=intuition,
+                    domains=selected_domains,
+                )
+                tmp_orch.close()
+                elapsed = round(time.monotonic() - t0, 2)
+                run_results.append(ModelRunResult(
+                    model_spec=spec,
+                    backend_available=True,
+                    weighing_result=result,
+                    duration_seconds=elapsed,
+                ))
+            except Exception as exc:
+                elapsed = round(time.monotonic() - t0, 2)
+                run_results.append(ModelRunResult(
+                    model_spec=spec,
+                    backend_available=False,
+                    weighing_result=None,
+                    error=str(exc),
+                    duration_seconds=elapsed,
+                ))
+
+        return self._build_evaluation_result(question, run_results)
+
+    # ------------------------------------------------------------------
+    # Model evaluation helpers
+    # ------------------------------------------------------------------
+
+    def _build_evaluation_result(
+        self,
+        question: str,
+        run_results: list[ModelRunResult],
+    ) -> ModelEvaluationResult:
+        available = [r for r in run_results if r.backend_available and r.weighing_result]
+        models_available = len(available)
+        models_evaluated = len(run_results)
+
+        if not available:
+            return ModelEvaluationResult(
+                question=question,
+                model_results=run_results,
+                consensus_answer="No models were available to evaluate.",
+                divergence_summary="All models unavailable.",
+                best_model_spec="none",
+                models_evaluated=models_evaluated,
+                models_available=0,
+                mean_intuition_accuracy_pct=0.0,
+            )
+
+        # Best model = highest intuition accuracy
+        best = max(available, key=lambda r: r.weighing_result.intuition_accuracy_pct)  # type: ignore[union-attr]
+        mean_acc = round(
+            sum(r.weighing_result.intuition_accuracy_pct for r in available) / models_available,  # type: ignore[union-attr]
+            1,
+        )
+
+        # Consensus: synthesized answers from all models → find common tokens
+        answers = [r.weighing_result.synthesized_answer for r in available]  # type: ignore[union-attr]
+        consensus = self._compute_consensus(answers)
+
+        # Divergence: models whose accuracy is > 20 pts from the mean
+        outliers = [
+            f"{r.model_spec} ({r.weighing_result.intuition_accuracy_pct:.1f}%)"  # type: ignore[union-attr]
+            for r in available
+            if abs(r.weighing_result.intuition_accuracy_pct - mean_acc) > 20  # type: ignore[union-attr]
+        ]
+        divergence = (
+            f"Outlier models: {', '.join(outliers)}" if outliers
+            else f"All {models_available} models were within ±20% of mean accuracy ({mean_acc:.1f}%)."
+        )
+
+        return ModelEvaluationResult(
+            question=question,
+            model_results=run_results,
+            consensus_answer=consensus,
+            divergence_summary=divergence,
+            best_model_spec=best.model_spec,
+            models_evaluated=models_evaluated,
+            models_available=models_available,
+            mean_intuition_accuracy_pct=mean_acc,
+        )
+
+    @staticmethod
+    def _compute_consensus(answers: list[str]) -> str:
+        """Return the answer that contains the most tokens shared by all answers."""
+        if not answers:
+            return ""
+        if len(answers) == 1:
+            return answers[0]
+        # Score each answer by how many of its tokens appear in ALL others
+        import re
+
+        def tokens(text: str) -> set[str]:
+            return set(re.findall(r"[a-z]{4,}", text.lower()))
+
+        all_token_sets = [tokens(a) for a in answers]
+        universal = set.intersection(*all_token_sets)
+        scored = sorted(
+            answers,
+            key=lambda a: len(tokens(a) & universal),
+            reverse=True,
+        )
+        return scored[0]
 
     # ------------------------------------------------------------------
     # Domain selection

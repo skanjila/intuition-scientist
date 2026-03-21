@@ -64,6 +64,10 @@ class AgentResponse:
     confidence: float
     sources: list[str] = field(default_factory=list)
     mcp_context: str = ""
+    #: Weight given to pure-intuition (knowledge-only) pipeline (0.0–1.0)
+    intuition_weight: float = 0.5
+    #: Weight given to MCP/tool-grounded pipeline (0.0–1.0)
+    tool_weight: float = 0.5
 
     def __post_init__(self) -> None:
         if not 0.0 <= self.confidence <= 1.0:
@@ -214,3 +218,53 @@ class InterviewResult:
     synthesized_answer: str
     #: Actionable improvement recommendations
     recommendations: list[str] = field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Model evaluation / cycling models
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ModelRunResult:
+    """Result from running the full pipeline with a single model backend."""
+
+    #: Provider spec string, e.g. ``"ollama:llama3.1:8b"`` or ``"mock"``
+    model_spec: str
+    #: Whether the backend was reachable
+    backend_available: bool
+    #: The full weighing result (``None`` when backend was unavailable)
+    weighing_result: Optional[WeighingResult]
+    #: Error message if the run failed
+    error: Optional[str] = None
+    #: Wall-clock time for this run in seconds
+    duration_seconds: float = 0.0
+
+
+@dataclass
+class ModelEvaluationResult:
+    """Cross-model evaluation summary produced by
+    :meth:`AgentOrchestrator.evaluate_models`.
+
+    Cycles through a list of model backends, runs the full dual-pipeline
+    (human intuition + MCP tools), and compares results to surface:
+    - which models agree with the human intuition best,
+    - where models diverge from each other,
+    - what the multi-model consensus answer is.
+    """
+
+    question: str
+    #: Individual result per model
+    model_results: list[ModelRunResult]
+    #: Answer text that the majority of models converged on
+    consensus_answer: str
+    #: Summary of where models disagreed
+    divergence_summary: str
+    #: Spec of the model that achieved the highest intuition accuracy
+    best_model_spec: str
+    #: Number of model specs evaluated
+    models_evaluated: int
+    #: Number of models that were actually reachable
+    models_available: int
+    #: Mean intuition accuracy across available models (0–100 %)
+    mean_intuition_accuracy_pct: float
