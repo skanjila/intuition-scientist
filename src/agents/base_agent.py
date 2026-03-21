@@ -1,0 +1,226 @@
+"""Abstract base class for all domain agents.
+
+Every domain agent inherits from ``BaseAgent`` and must implement the
+``_build_system_prompt`` method.  The public ``answer`` method handles:
+
+1. Optionally querying the internet via the MCP client.
+2. Constructing a domain-specific prompt.
+3. Calling the configured LLM (Anthropic Claude or OpenAI) to produce a
+   structured answer.
+4. Returning an ``AgentResponse`` dataclass.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+from abc import ABC, abstractmethod
+from typing import Optional
+
+from src.mcp.mcp_client import MCPClient
+from src.models import AgentResponse, Domain, SearchResult
+
+
+class BaseAgent(ABC):
+    """Base for all domain-specific agents."""
+
+    #: Override in subclasses to declare which domain this agent covers.
+    domain: Domain
+
+    def __init__(
+        self,
+        mcp_client: Optional[MCPClient] = None,
+        llm_provider: str = "anthropic",
+        model: Optional[str] = None,
+    ) -> None:
+        self.mcp_client = mcp_client
+        self.llm_provider = llm_provider.lower()
+        self.model = model or self._default_model()
+        self._llm_client = self._init_llm_client()
+
+    # ------------------------------------------------------------------
+    # Public interface
+    # ------------------------------------------------------------------
+
+    def answer(self, question: str) -> AgentResponse:
+        """Produce a domain-expert answer for *question*.
+
+        Steps:
+        1. Search the internet for relevant context (if MCP client available).
+        2. Build the full prompt.
+        3. Call the LLM.
+        4. Return a structured ``AgentResponse``.
+        """
+        search_results: list[SearchResult] = []
+        mcp_context = ""
+
+        if self.mcp_client is not None:
+            query = f"{self.domain.value.replace('_', ' ')} {question}"
+            try:
+                search_results = self.mcp_client.search(query, num_results=3)
+                mcp_context = self._format_search_context(search_results)
+            except Exception:
+                mcp_context = ""
+
+        raw = self._call_llm(question, mcp_context)
+        return self._parse_response(question, raw, search_results, mcp_context)
+
+    # ------------------------------------------------------------------
+    # Subclass contract
+    # ------------------------------------------------------------------
+
+    @abstractmethod
+    def _build_system_prompt(self) -> str:
+        """Return the system-level prompt that gives this agent its persona."""
+
+    # ------------------------------------------------------------------
+    # LLM wiring
+    # ------------------------------------------------------------------
+
+    def _default_model(self) -> str:
+        if self.llm_provider == "anthropic":
+            return "claude-3-haiku-20240307"
+        return "gpt-4o-mini"
+
+    def _init_llm_client(self) -> object:
+        if self.llm_provider == "anthropic":
+            try:
+                import anthropic  # type: ignore
+
+                return anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY", ""))
+            except ImportError:
+                return None
+        else:
+            try:
+                import openai  # type: ignore
+
+                return openai.OpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
+            except ImportError:
+                return None
+
+    def _call_llm(self, question: str, mcp_context: str) -> str:
+        """Call the LLM and return the raw text response."""
+        system_prompt = self._build_system_prompt()
+        user_message = self._build_user_message(question, mcp_context)
+
+        if self._llm_client is None:
+            return self._mock_response(question)
+
+        try:
+            if self.llm_provider == "anthropic":
+                return self._call_anthropic(system_prompt, user_message)
+            return self._call_openai(system_prompt, user_message)
+        except Exception as exc:
+            return self._mock_response(question, error=str(exc))
+
+    def _call_anthropic(self, system: str, user: str) -> str:
+        import anthropic  # type: ignore
+
+        msg = self._llm_client.messages.create(  # type: ignore[union-attr]
+            model=self.model,
+            max_tokens=1024,
+            system=system,
+            messages=[{"role": "user", "content": user}],
+        )
+        return msg.content[0].text
+
+    def _call_openai(self, system: str, user: str) -> str:
+        resp = self._llm_client.chat.completions.create(  # type: ignore[union-attr]
+            model=self.model,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+        )
+        return resp.choices[0].message.content or ""
+
+    # ------------------------------------------------------------------
+    # Prompt helpers
+    # ------------------------------------------------------------------
+
+    def _build_user_message(self, question: str, mcp_context: str) -> str:
+        parts = [f"Question: {question}"]
+        if mcp_context:
+            parts.append(f"\nAdditional context from the internet:\n{mcp_context}")
+        parts.append(
+            "\nPlease answer in the following JSON format:\n"
+            "{\n"
+            '  "answer": "<concise expert answer>",\n'
+            '  "reasoning": "<step-by-step reasoning>",\n'
+            '  "confidence": <0.0-1.0>,\n'
+            '  "sources": ["<source or reference>", ...]\n'
+            "}"
+        )
+        return "\n".join(parts)
+
+    @staticmethod
+    def _format_search_context(results: list[SearchResult]) -> str:
+        if not results:
+            return ""
+        lines = ["Web search results:"]
+        for i, r in enumerate(results, 1):
+            lines.append(f"{i}. [{r.title}]({r.url})")
+            if r.snippet:
+                lines.append(f"   {r.snippet[:300]}")
+        return "\n".join(lines)
+
+    # ------------------------------------------------------------------
+    # Response parsing
+    # ------------------------------------------------------------------
+
+    def _parse_response(
+        self,
+        question: str,
+        raw: str,
+        search_results: list[SearchResult],
+        mcp_context: str,
+    ) -> AgentResponse:
+        """Try to parse a JSON blob from *raw*; fall back to plain text."""
+        data = self._extract_json(raw)
+        sources = [r.url for r in search_results if r.url]
+        if data:
+            return AgentResponse(
+                domain=self.domain,
+                answer=str(data.get("answer", raw)),
+                reasoning=str(data.get("reasoning", "")),
+                confidence=float(data.get("confidence", 0.7)),
+                sources=data.get("sources", sources),
+                mcp_context=mcp_context,
+            )
+        # Fall back: treat the whole text as the answer
+        return AgentResponse(
+            domain=self.domain,
+            answer=raw,
+            reasoning="",
+            confidence=0.6,
+            sources=sources,
+            mcp_context=mcp_context,
+        )
+
+    @staticmethod
+    def _extract_json(text: str) -> Optional[dict]:
+        """Extract the first JSON object found in *text*."""
+        try:
+            start = text.index("{")
+            end = text.rindex("}") + 1
+            return json.loads(text[start:end])
+        except (ValueError, json.JSONDecodeError):
+            return None
+
+    # ------------------------------------------------------------------
+    # Mock / offline fallback
+    # ------------------------------------------------------------------
+
+    def _mock_response(self, question: str, error: str = "") -> str:
+        note = f" (LLM unavailable: {error})" if error else " (LLM unavailable – offline mode)"
+        return json.dumps(
+            {
+                "answer": (
+                    f"[{self.domain.value}] A domain-expert analysis of '{question}' "
+                    f"is required.{note}"
+                ),
+                "reasoning": "No LLM client configured or reachable.",
+                "confidence": 0.3,
+                "sources": [],
+            }
+        )
