@@ -1,0 +1,99 @@
+# Complex Q/A pairs used by the model sweep test suite.
+#
+# Each entry contains:
+#   question       — the question asked of the system
+#   intuition      — prefilled human intuition (answer, confidence, reasoning)
+#   domains        — explicit domain list to invoke (optional; auto-detected if absent)
+#   expected_keywords  — words that should appear in the synthesized answer (case-insensitive)
+#
+# The "intuition" block maps directly to HumanIntuition fields.
+
+- id: gravity_relativity
+  question: "How does general relativity explain gravity differently from Newton's law?"
+  intuition:
+    answer: >
+      General relativity describes gravity as the curvature of spacetime caused by
+      mass and energy, while Newton treats gravity as an instantaneous force between
+      two masses proportional to their product and inversely proportional to the
+      square of the distance.
+    confidence: 0.75
+    reasoning: >
+      Einstein showed that massive objects warp the fabric of spacetime and other
+      objects follow geodesics through that curved spacetime, which we perceive as
+      gravitational attraction. Newton's model is an excellent approximation at
+      low speeds and weak fields but breaks down near very massive or fast-moving
+      objects.
+  domains: [physics, space_science]
+  expected_keywords: [spacetime, curvature, einstein, newton]
+
+- id: neural_network_learning
+  question: >
+    What mechanisms allow deep neural networks to generalise beyond their
+    training data?
+  intuition:
+    answer: >
+      Deep networks generalise through a combination of regularisation techniques
+      (dropout, weight decay), sufficient data diversity, and implicit biases in
+      gradient-based optimisation that prefer simpler solutions.
+    confidence: 0.70
+    reasoning: >
+      Regularisation prevents overfitting by penalising complexity.  The implicit
+      bias of SGD toward flat minima helps find solutions that generalise.  Data
+      augmentation artificially expands the distribution the model sees.
+  domains: [deep_learning, neural_networks]
+  expected_keywords: [regularisation, generalise, overfitting, gradient]
+
+- id: social_trust
+  question: >
+    What social and psychological mechanisms underpin the formation of
+    institutional trust in a society?
+  intuition:
+    answer: >
+      Institutional trust forms through repeated positive interactions, perceived
+      competence and benevolence of institutions, cultural norms of reciprocity,
+      transparency, and accountability mechanisms.
+    confidence: 0.65
+    reasoning: >
+      People update their trust based on past experiences and social learning.
+      When institutions consistently deliver on promises and are seen to act in
+      the public interest, generalised trust accumulates. Media, education, and
+      peer networks amplify or erode these perceptions.
+  domains: [social_science]
+  expected_keywords: [trust, social, institution, reciprocity]
+
+- id: quantum_computing
+  question: >
+    How do quantum computers leverage superposition and entanglement to
+    achieve computational speed-ups over classical computers?
+  intuition:
+    answer: >
+      Quantum computers use qubits that can exist in superpositions of 0 and 1
+      simultaneously, allowing algorithms to explore many solution paths in
+      parallel.  Entanglement correlates qubits so that operations on one
+      instantaneously affect others, enabling efficient algorithms like Shor's
+      and Grover's.
+    confidence: 0.72
+    reasoning: >
+      Shor's algorithm exploits quantum Fourier transforms and periodicity to
+      factorise large numbers exponentially faster. Grover's algorithm uses
+      amplitude amplification for a quadratic search speed-up.
+  domains: [computer_science, physics]
+  expected_keywords: [qubit, superposition, entanglement, algorithm]
+
+- id: rl_exploration
+  question: >
+    How do reinforcement learning agents balance exploration and exploitation
+    in environments with sparse rewards?
+  intuition:
+    answer: >
+      Agents balance exploration and exploitation through strategies such as
+      epsilon-greedy action selection, upper confidence bound methods, intrinsic
+      curiosity rewards, and hierarchical RL that decomposes the problem into
+      sub-goals to make sparse rewards denser.
+    confidence: 0.68
+    reasoning: >
+      Pure exploitation gets stuck in local optima; pure exploration never
+      converges. Intrinsic rewards based on state novelty or prediction error
+      help agents explore efficiently without needing dense external rewards.
+  domains: [deep_learning, computer_science]
+  expected_keywords: [exploration, exploitation, reward, epsilon]

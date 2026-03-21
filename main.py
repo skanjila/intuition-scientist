@@ -3,17 +3,21 @@
 
 Usage
 -----
-    python main.py                         # fully interactive
-    python main.py --question "..."        # supply question on the CLI
-    python main.py --provider openai       # use OpenAI instead of Anthropic
-    python main.py --no-mcp                # disable internet search
-    python main.py --domains physics cs    # restrict to specific domains
+    python main.py                               # fully interactive (mock backend)
+    python main.py --question "..."              # supply question on the CLI
+    python main.py --provider ollama:llama3.1:8b # use Ollama local model
+    python main.py --provider groq:llama-3.1-8b-instant  # use Groq free-tier
+    python main.py --no-mcp                      # disable internet search
+    python main.py --domains physics cs          # restrict to specific domains
+
+Supported free/open backends:  mock, ollama, llamacpp, groq, together,
+                                cloudflare, openrouter.
+Anthropic and OpenAI are NOT supported (paid/proprietary providers).
 """
 
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 from typing import Optional
 
@@ -171,14 +175,23 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--provider",
-        choices=["anthropic", "openai"],
-        default="anthropic",
-        help="LLM provider to use (default: anthropic).",
+        default="mock",
+        metavar="SPEC",
+        help=(
+            "Backend provider spec. Supported free/open backends: "
+            "mock (default), ollama:<model>, llamacpp:<path>, "
+            "groq:<model>, together:<model>, "
+            "cloudflare:<model>, openrouter:<model>. "
+            "Anthropic and OpenAI are not supported."
+        ),
     )
     parser.add_argument(
         "--model",
         default=None,
-        help="Explicit model name override.",
+        help=(
+            "Model name (shorthand: equivalent to --provider <provider>:<model>). "
+            "Ignored when --provider already contains a model suffix."
+        ),
     )
     parser.add_argument(
         "--no-mcp",
@@ -216,21 +229,23 @@ def main(argv: Optional[list[str]] = None) -> None:
     parser = _build_parser()
     args = parser.parse_args(argv)
 
-    # Validate API key early
-    if args.provider == "anthropic" and not os.environ.get("ANTHROPIC_API_KEY"):
+    # Build the backend spec
+    backend_spec = args.provider
+    # If --model is given and --provider has no colon (i.e. is just a provider
+    # name without a model suffix), combine them.
+    if args.model and ":" not in backend_spec:
+        backend_spec = f"{backend_spec}:{args.model}"
+
+    # Validate: reject Anthropic/OpenAI early with a helpful error
+    from src.llm.registry import get_backend as _get_backend, _BLOCKED_PROVIDERS
+    provider_name = backend_spec.split(":")[0].lower()
+    if provider_name in _BLOCKED_PROVIDERS:
         _print(
-            "[yellow]Warning: ANTHROPIC_API_KEY is not set. "
-            "Agents will run in offline/mock mode.[/yellow]"
+            f"[red]Error: {_BLOCKED_PROVIDERS[provider_name]}[/red]"
             if HAS_RICH
-            else "Warning: ANTHROPIC_API_KEY is not set. Offline mode."
+            else f"Error: {_BLOCKED_PROVIDERS[provider_name]}"
         )
-    elif args.provider == "openai" and not os.environ.get("OPENAI_API_KEY"):
-        _print(
-            "[yellow]Warning: OPENAI_API_KEY is not set. "
-            "Agents will run in offline/mock mode.[/yellow]"
-            if HAS_RICH
-            else "Warning: OPENAI_API_KEY is not set. Offline mode."
-        )
+        sys.exit(1)
 
     # Parse domain overrides
     domains = None
@@ -260,8 +275,7 @@ def main(argv: Optional[list[str]] = None) -> None:
     from src.orchestrator.agent_orchestrator import AgentOrchestrator
 
     with AgentOrchestrator(
-        llm_provider=args.provider,
-        model=args.model,
+        backend_spec=backend_spec,
         use_mcp=not args.no_mcp,
         max_domains=args.max_domains,
     ) as orchestrator:

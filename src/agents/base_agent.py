@@ -5,7 +5,7 @@ Every domain agent inherits from ``BaseAgent`` and must implement the
 
 1. Optionally querying the internet via the MCP client.
 2. Constructing a domain-specific prompt.
-3. Calling the configured LLM (Anthropic Claude or OpenAI) to produce a
+3. Calling the configured LLM backend (free/open models only) to produce a
    structured answer.
 4. Returning an ``AgentResponse`` dataclass.
 """
@@ -13,10 +13,11 @@ Every domain agent inherits from ``BaseAgent`` and must implement the
 from __future__ import annotations
 
 import json
-import os
 from abc import ABC, abstractmethod
 from typing import Optional
 
+from src.llm.base import LLMBackend
+from src.llm.mock_backend import MockBackend
 from src.mcp.mcp_client import MCPClient
 from src.models import AgentResponse, Domain, SearchResult
 
@@ -30,13 +31,20 @@ class BaseAgent(ABC):
     def __init__(
         self,
         mcp_client: Optional[MCPClient] = None,
-        llm_provider: str = "anthropic",
+        backend: Optional[LLMBackend] = None,
+        # Deprecated parameters kept for backwards compatibility; ignored.
+        llm_provider: str = "mock",
         model: Optional[str] = None,
     ) -> None:
         self.mcp_client = mcp_client
-        self.llm_provider = llm_provider.lower()
-        self.model = model or self._default_model()
-        self._llm_client = self._init_llm_client()
+        self._backend: LLMBackend = backend if backend is not None else MockBackend()
+        # Keep llm_provider/model attributes so external code that reads them
+        # does not break, but they no longer drive LLM selection.
+        self.llm_provider = "mock" if backend is None else "custom"
+        self.model = model or "mock"
+        # _llm_client kept as None so legacy checks (``if self._llm_client``)
+        # fall through to the mock path in any code we have not yet updated.
+        self._llm_client = None
 
     # ------------------------------------------------------------------
     # Public interface
@@ -77,62 +85,14 @@ class BaseAgent(ABC):
     # LLM wiring
     # ------------------------------------------------------------------
 
-    def _default_model(self) -> str:
-        if self.llm_provider == "anthropic":
-            return "claude-3-haiku-20240307"
-        return "gpt-4o-mini"
-
-    def _init_llm_client(self) -> object:
-        if self.llm_provider == "anthropic":
-            try:
-                import anthropic  # type: ignore
-
-                return anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY", ""))
-            except ImportError:
-                return None
-        else:
-            try:
-                import openai  # type: ignore
-
-                return openai.OpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
-            except ImportError:
-                return None
-
     def _call_llm(self, question: str, mcp_context: str) -> str:
-        """Call the LLM and return the raw text response."""
+        """Call the LLM backend and return the raw text response."""
         system_prompt = self._build_system_prompt()
         user_message = self._build_user_message(question, mcp_context)
-
-        if self._llm_client is None:
-            return self._mock_response(question)
-
         try:
-            if self.llm_provider == "anthropic":
-                return self._call_anthropic(system_prompt, user_message)
-            return self._call_openai(system_prompt, user_message)
+            return self._backend.generate(system_prompt, user_message)
         except Exception as exc:
             return self._mock_response(question, error=str(exc))
-
-    def _call_anthropic(self, system: str, user: str) -> str:
-        import anthropic  # type: ignore
-
-        msg = self._llm_client.messages.create(  # type: ignore[union-attr]
-            model=self.model,
-            max_tokens=1024,
-            system=system,
-            messages=[{"role": "user", "content": user}],
-        )
-        return msg.content[0].text
-
-    def _call_openai(self, system: str, user: str) -> str:
-        resp = self._llm_client.chat.completions.create(  # type: ignore[union-attr]
-            model=self.model,
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-        )
-        return resp.choices[0].message.content or ""
 
     # ------------------------------------------------------------------
     # Prompt helpers

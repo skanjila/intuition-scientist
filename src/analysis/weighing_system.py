@@ -7,7 +7,7 @@ domain-agent response and produces a rich, multi-dimensional analysis.
 Algorithm overview
 ------------------
 1. **Semantic similarity** — keyword overlap (Jaccard) between the intuition
-   and each agent answer.  When an LLM client is available the similarity is
+   and each agent answer.  When an LLM backend is available the similarity is
    upgraded to a proper embedding-based cosine similarity.
 
 2. **Confidence weighting** — each agent response is weighted by its own
@@ -28,10 +28,11 @@ Algorithm overview
 from __future__ import annotations
 
 import math
-import os
 import re
 from typing import Optional
 
+from src.llm.base import LLMBackend
+from src.llm.mock_backend import MockBackend
 from src.models import (
     AgentResponse,
     AlignmentScore,
@@ -114,25 +115,28 @@ class WeighingSystem:
 
     Parameters
     ----------
-    llm_client:
-        Optional Anthropic or OpenAI client.  When provided, the LLM is used
+    backend:
+        Optional ``LLMBackend`` instance.  When provided, the LLM is used
         to generate a high-quality ``overall_analysis`` narrative and richer
-        ``AlignmentScore`` text fields.
-    llm_provider:
-        ``"anthropic"`` or ``"openai"``.
-    model:
-        Model name override.
+        ``AlignmentScore`` text fields.  Defaults to ``MockBackend`` (offline).
+
+    .. deprecated::
+        ``llm_client``, ``llm_provider``, and ``model`` keyword arguments are
+        accepted for backwards compatibility but are ignored.  Pass ``backend``
+        instead.
     """
 
     def __init__(
         self,
+        backend: Optional[LLMBackend] = None,
+        # Legacy kwargs — accepted but ignored
         llm_client: Optional[object] = None,
-        llm_provider: str = "anthropic",
+        llm_provider: str = "mock",
         model: Optional[str] = None,
     ) -> None:
-        self.llm_client = llm_client
-        self.llm_provider = llm_provider.lower()
-        self.model = model or ("claude-3-haiku-20240307" if llm_provider == "anthropic" else "gpt-4o-mini")
+        self._backend: LLMBackend = backend if backend is not None else MockBackend()
+        # _use_llm is True only when a real (non-mock) backend was provided
+        self._use_llm = backend is not None and not isinstance(backend, MockBackend)
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -210,7 +214,7 @@ class WeighingSystem:
         divergences = [d for d in divergences if d]
 
         # LLM-generated intuition insight
-        insight = self._llm_insight(intuition, resp) if self.llm_client else (
+        insight = self._llm_insight(intuition, resp) if self._use_llm else (
             f"Semantic similarity: {sim:.2f}. "
             f"Common concepts: {', '.join(agreements) if agreements else 'none'}."
         )
@@ -263,7 +267,7 @@ class WeighingSystem:
         accuracy_pct: float,
     ) -> str:
         """Blend expert consensus with human intuition."""
-        if self.llm_client:
+        if self._use_llm:
             return self._llm_synthesis(intuition, responses, accuracy_pct)
 
         # Fallback: pick the highest-confidence agent answer and blend
@@ -336,7 +340,7 @@ class WeighingSystem:
         alignments: list[AlignmentScore],
         accuracy_pct: float,
     ) -> str:
-        if self.llm_client:
+        if self._use_llm:
             return self._llm_full_analysis(intuition, responses, alignments, accuracy_pct)
 
         # Fallback text analysis
@@ -433,24 +437,8 @@ class WeighingSystem:
     # ------------------------------------------------------------------
 
     def _call_llm(self, prompt: str, max_tokens: int = 256) -> str:
-        if self.llm_client is None:
-            return ""
         try:
-            if self.llm_provider == "anthropic":
-                import anthropic  # type: ignore
-
-                msg = self.llm_client.messages.create(  # type: ignore[union-attr]
-                    model=self.model,
-                    max_tokens=max_tokens,
-                    messages=[{"role": "user", "content": prompt}],
-                )
-                return msg.content[0].text
-            else:
-                resp = self.llm_client.chat.completions.create(  # type: ignore[union-attr]
-                    model=self.model,
-                    messages=[{"role": "user", "content": prompt}],
-                )
-                return resp.choices[0].message.content or ""
+            return self._backend.generate("", prompt, max_tokens=max_tokens)
         except Exception:
             return ""
 

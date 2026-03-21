@@ -11,7 +11,6 @@ The orchestrator:
 
 from __future__ import annotations
 
-import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional
 
@@ -25,6 +24,8 @@ from src.agents.social_science_agent import SocialScienceAgent
 from src.agents.space_science_agent import SpaceScienceAgent
 from src.analysis.weighing_system import WeighingSystem
 from src.intuition.human_intuition import IntuitionCapture
+from src.llm.base import LLMBackend
+from src.llm.registry import get_backend
 from src.mcp.mcp_client import MCPClient
 from src.models import AgentResponse, Domain, HumanIntuition, WeighingResult
 
@@ -49,12 +50,13 @@ class AgentOrchestrator:
 
     Parameters
     ----------
-    llm_provider:
-        ``"anthropic"`` or ``"openai"``.  The same provider is used for all
-        domain agents and the weighing system.
-    model:
-        Explicit model name (e.g. ``"claude-3-haiku-20240307"``).
-        Defaults to the provider's recommended fast model.
+    backend_spec:
+        A provider spec string such as ``"mock"``, ``"ollama:llama3.1:8b"``,
+        ``"groq:llama-3.1-8b-instant"``, etc.  Only free/open providers are
+        supported.  Defaults to ``"mock"`` (offline, no model required).
+    backend:
+        A pre-constructed ``LLMBackend`` instance.  When supplied,
+        *backend_spec* is ignored.
     use_mcp:
         Whether to enable the MCP internet-search client for agents.
     max_workers:
@@ -62,29 +64,34 @@ class AgentOrchestrator:
     max_domains:
         Maximum number of domain agents to invoke per question.
         When ``None`` all relevant agents are used.
+
+    .. deprecated::
+        ``llm_provider`` and ``model`` keyword arguments are accepted but
+        ignored; pass ``backend_spec`` or ``backend`` instead.
     """
 
     def __init__(
         self,
-        llm_provider: str = "anthropic",
-        model: Optional[str] = None,
+        backend_spec: str = "mock",
+        backend: Optional[LLMBackend] = None,
         use_mcp: bool = True,
         max_workers: int = 7,
         max_domains: Optional[int] = None,
+        # Legacy kwargs — accepted but ignored
+        llm_provider: str = "mock",
+        model: Optional[str] = None,
     ) -> None:
-        self.llm_provider = llm_provider
-        self.model = model
+        if backend is not None:
+            self._backend: LLMBackend = backend
+        else:
+            self._backend = get_backend(backend_spec)
+
         self.use_mcp = use_mcp
         self.max_workers = max_workers
         self.max_domains = max_domains
 
         self._mcp_client = MCPClient() if use_mcp else None
-        self._llm_client = self._init_llm_client()
-        self._weighing_system = WeighingSystem(
-            llm_client=self._llm_client,
-            llm_provider=llm_provider,
-            model=model,
-        )
+        self._weighing_system = WeighingSystem(backend=self._backend)
         self._intuition_capture = IntuitionCapture(interactive=True)
 
     # ------------------------------------------------------------------
@@ -166,8 +173,7 @@ class AgentOrchestrator:
                 continue
             agent = cls(
                 mcp_client=self._mcp_client,
-                llm_provider=self.llm_provider,
-                model=self.model,
+                backend=self._backend,
             )
             agents.append(agent)
         return agents
@@ -202,28 +208,6 @@ class AgentOrchestrator:
         return [responses[i] for i in sorted(responses)]
 
     # ------------------------------------------------------------------
-    # LLM client initialisation
-    # ------------------------------------------------------------------
-
-    def _init_llm_client(self) -> Optional[object]:
-        if self.llm_provider == "anthropic":
-            try:
-                import anthropic  # type: ignore
-
-                return anthropic.Anthropic(
-                    api_key=os.environ.get("ANTHROPIC_API_KEY", "")
-                )
-            except ImportError:
-                return None
-        else:
-            try:
-                import openai  # type: ignore
-
-                return openai.OpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
-            except ImportError:
-                return None
-
-    # ------------------------------------------------------------------
     # Cleanup
     # ------------------------------------------------------------------
 
@@ -237,3 +221,4 @@ class AgentOrchestrator:
 
     def __exit__(self, *_: object) -> None:
         self.close()
+
