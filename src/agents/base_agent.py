@@ -101,12 +101,14 @@ class BaseAgent(ABC):
         self,
         mcp_client: Optional[MCPClient] = None,
         backend: Optional[LLMBackend] = None,
+        max_tokens: int = 1024,
         # Deprecated parameters kept for backwards compatibility; ignored.
         llm_provider: str = "mock",
         model: Optional[str] = None,
     ) -> None:
         self.mcp_client = mcp_client
         self._backend: LLMBackend = backend if backend is not None else MockBackend()
+        self._max_tokens = max_tokens
         self.llm_provider = "mock" if backend is None else "custom"
         self.model = model or "mock"
         self._llm_client = None  # legacy attribute kept for compat
@@ -297,7 +299,7 @@ class BaseAgent(ABC):
         system_prompt = self._build_system_prompt()
         user_message = self._build_user_message(question, mcp_context)
         try:
-            return self._backend.generate(system_prompt, user_message)
+            return self._backend.generate(system_prompt, user_message, max_tokens=self._max_tokens)
         except Exception as exc:
             return self._mock_response(question, error=str(exc))
 

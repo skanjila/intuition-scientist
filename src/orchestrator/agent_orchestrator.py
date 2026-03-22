@@ -117,6 +117,12 @@ class AgentOrchestrator:
     max_domains:
         Maximum number of domain agents to invoke per question.
         When ``None`` all relevant agents are used.
+    agent_max_tokens:
+        Token budget for each per-agent LLM call (default: 1024).
+        Lower values (e.g. 256) reduce latency for local backends.
+    synthesis_max_tokens:
+        Token budget for synthesis and full-analysis LLM calls
+        (default: 512).  Lower values (e.g. 384) reduce latency.
 
     .. deprecated::
         ``llm_provider`` and ``model`` keyword arguments are accepted but
@@ -130,6 +136,8 @@ class AgentOrchestrator:
         use_mcp: bool = True,
         max_workers: int = 7,
         max_domains: Optional[int] = None,
+        agent_max_tokens: int = 1024,
+        synthesis_max_tokens: int = 512,
         # Legacy kwargs — accepted but ignored
         llm_provider: str = "mock",
         model: Optional[str] = None,
@@ -142,9 +150,13 @@ class AgentOrchestrator:
         self.use_mcp = use_mcp
         self.max_workers = max_workers
         self.max_domains = max_domains
+        self._agent_max_tokens = agent_max_tokens
 
         self._mcp_client = MCPClient() if use_mcp else None
-        self._weighing_system = WeighingSystem(backend=self._backend)
+        self._weighing_system = WeighingSystem(
+            backend=self._backend,
+            synthesis_max_tokens=synthesis_max_tokens,
+        )
         self._debate_engine = DebateEngine(backend=self._backend)
         self._intuition_capture = IntuitionCapture(interactive=True)
 
@@ -506,6 +518,7 @@ class AgentOrchestrator:
             agent = cls(
                 mcp_client=self._mcp_client,
                 backend=self._backend,
+                max_tokens=self._agent_max_tokens,
             )
             agents.append(agent)
         return agents
@@ -543,9 +556,11 @@ class AgentOrchestrator:
     # ------------------------------------------------------------------
 
     def close(self) -> None:
-        """Release resources (MCP HTTP client, etc.)."""
+        """Release resources (MCP HTTP client, backend connections, etc.)."""
         if self._mcp_client is not None:
             self._mcp_client.close()
+        if callable(getattr(self._backend, "close", None)):
+            self._backend.close()  # type: ignore[union-attr]
 
     def __enter__(self) -> "AgentOrchestrator":
         return self

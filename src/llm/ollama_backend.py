@@ -14,6 +14,11 @@ _DEFAULT_TIMEOUT = 120.0  # seconds — local inference can be slow
 class OllamaBackend:
     """Connects to a locally running Ollama server.
 
+    A single persistent :class:`httpx.Client` is reused across all
+    ``generate()`` calls so that TCP keep-alive and connection pooling
+    reduce per-request overhead — particularly beneficial when many
+    agent calls are made in a single session.
+
     Parameters
     ----------
     model:
@@ -33,6 +38,8 @@ class OllamaBackend:
         self.model = model
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
+        # Persistent client — reused across all generate() calls.
+        self._client = httpx.Client(timeout=self.timeout)
 
     def generate(self, system: str, user: str, max_tokens: int = 1024) -> str:
         """Send a chat request to Ollama and return the assistant reply."""
@@ -47,7 +54,7 @@ class OllamaBackend:
             "options": {"num_predict": max_tokens},
         }
         try:
-            response = httpx.post(url, json=payload, timeout=self.timeout)
+            response = self._client.post(url, json=payload)
             response.raise_for_status()
             data = response.json()
             return data["message"]["content"]
@@ -62,3 +69,13 @@ class OllamaBackend:
             ) from exc
         except (KeyError, json.JSONDecodeError) as exc:
             raise RuntimeError(f"Unexpected Ollama response format: {exc}") from exc
+
+    def close(self) -> None:
+        """Close the underlying HTTP client and release connection resources."""
+        self._client.close()
+
+    def __enter__(self) -> "OllamaBackend":
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.close()
