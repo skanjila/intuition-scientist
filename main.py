@@ -3,16 +3,30 @@
 
 Usage
 -----
-    python main.py                               # fully interactive (mock backend)
-    python main.py --question "..."              # supply question on the CLI
-    python main.py --provider ollama:llama3.1:8b # use Ollama local model
-    python main.py --provider groq:llama-3.1-8b-instant  # use Groq free-tier
-    python main.py --no-mcp                      # disable internet search
-    python main.py --domains physics cs          # restrict to specific domains
-    python main.py --fast                        # lowest-latency preset (Ollama/Apple Silicon)
-    python main.py --max-workers 2               # custom thread-pool size
-    python main.py --auto-intuition              # skip interactive prompt (good for CI)
-    python main.py --agent-timeout-seconds 15   # per-agent timeout in seconds
+    python main.py                                      # non-interactive (auto-intuition, mock backend)
+    python main.py --question "..."                     # supply question non-interactively
+    python main.py --interactive                        # always prompt for human intuition
+    python main.py --interactive --question "..."       # prompt + question on CLI
+    python main.py --non-interactive                    # never prompt (same as --auto-intuition)
+    python main.py --human-policy always                # policy: always|auto|never
+    python main.py --provider ollama:llama3.1:8b        # use Ollama local model
+    python main.py --provider groq:llama-3.1-8b-instant # use Groq free-tier
+    python main.py --no-mcp                             # disable internet search
+    python main.py --domains physics cs                 # restrict to specific domains
+    python main.py --fast                               # lowest-latency preset (Ollama/Apple Silicon)
+    python main.py --adaptive-agents                    # adaptive domain expansion
+    python main.py --max-workers 2                      # custom thread-pool size
+    python main.py --auto-intuition                     # legacy alias for --non-interactive
+    python main.py --agent-timeout-seconds 15           # per-agent timeout in seconds
+    python main.py --verbose                            # show detailed per-agent progress
+    python main.py --quiet                              # suppress all progress output
+
+Default behaviour
+-----------------
+Running ``python main.py`` (or ``python main.py --question "..."``) is
+**non-interactive**: the system auto-generates a lightweight human intuition
+perspective and immediately queries domain agents.  No stdin prompt is shown
+unless --interactive (or --human-policy always) is passed.
 
 Supported free/open backends:  mock, ollama, llamacpp, groq, together,
                                 cloudflare, openrouter.
@@ -233,7 +247,11 @@ def _display_result(result: WeighingResult, workflow_mode: WorkflowMapMode = Wor
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="intuition-scientist",
-        description="Human Intuition Scientist: test your intuition against domain experts.",
+        description=(
+            "Human Intuition Scientist: test your intuition against domain experts.\n\n"
+            "Default mode is non-interactive (auto-intuition). "
+            "Add --interactive to be prompted for your intuition."
+        ),
     )
     parser.add_argument(
         "--question", "-q",
@@ -275,18 +293,56 @@ def _build_parser() -> argparse.ArgumentParser:
             "Use this to override the --fast preset which disables MCP by default."
         ),
     )
-    parser.add_argument(
+
+    # ------------------------------------------------------------------
+    # Human involvement policy flags
+    # ------------------------------------------------------------------
+    interaction_group = parser.add_mutually_exclusive_group()
+    interaction_group.add_argument(
+        "--interactive",
+        action="store_true",
+        default=False,
+        help=(
+            "Always prompt for human intuition interactively. "
+            "Overrides the default non-interactive (auto-intuition) mode."
+        ),
+    )
+    interaction_group.add_argument(
+        "--non-interactive",
+        action="store_true",
+        default=False,
+        help=(
+            "Never prompt; always use auto-generated intuition. "
+            "Equivalent to --human-policy never. "
+            "Also implied by --auto-intuition (legacy flag)."
+        ),
+    )
+    interaction_group.add_argument(
         "--auto-intuition",
         action="store_true",
         default=False,
         help=(
-            "Skip the interactive human-intuition prompt. "
-            "Instead, the system auto-generates a lightweight intuition response "
-            "using keyword heuristics and (when an LLM backend is available) a "
-            "short quick-think pass. Default behaviour (interactive prompt) is "
-            "unchanged unless this flag is supplied."
+            "Legacy alias for --non-interactive. "
+            "Skip the interactive human-intuition prompt; "
+            "the system auto-generates a lightweight intuition response instead. "
+            "This is now the default — use --interactive to force prompting."
         ),
     )
+    parser.add_argument(
+        "--human-policy",
+        default=None,
+        choices=["auto", "always", "never"],
+        metavar="POLICY",
+        help=(
+            "Human involvement policy. "
+            "auto (default): prompt only when escalation is triggered "
+            "(high-stakes domain, low confidence, high disagreement, or MCP missing). "
+            "always: always prompt interactively (same as --interactive). "
+            "never: never prompt (same as --non-interactive). "
+            "When --interactive or --non-interactive is given, this flag is ignored."
+        ),
+    )
+
     parser.add_argument(
         "--adaptive-agents",
         action="store_true",
@@ -403,6 +459,27 @@ def _build_parser() -> argparse.ArgumentParser:
             "Use a smaller value (e.g. 10) for faster feedback in CI."
         ),
     )
+
+    # ------------------------------------------------------------------
+    # Verbosity flags
+    # ------------------------------------------------------------------
+    verbosity_group = parser.add_mutually_exclusive_group()
+    verbosity_group.add_argument(
+        "--verbose", "-v",
+        action="store_true",
+        default=False,
+        help=(
+            "Show detailed per-agent progress (domain selection, agent start/finish, "
+            "MCP status, pipeline used). Default is user-friendly progress output."
+        ),
+    )
+    verbosity_group.add_argument(
+        "--quiet",
+        action="store_true",
+        default=False,
+        help="Suppress all progress output; only print the final result.",
+    )
+
     return parser
 
 
@@ -473,12 +550,40 @@ def main(argv: Optional[list[str]] = None) -> None:
                 sys.exit(1)
 
     # ------------------------------------------------------------------
-    # New feature flags
+    # Resolve the human-involvement policy
     # ------------------------------------------------------------------
-    auto_intuition: bool = args.auto_intuition
+    from src.intuition.human_policy import HumanPolicy, decide_interactive
+
+    if args.interactive:
+        policy = HumanPolicy.ALWAYS
+    elif args.non_interactive or args.auto_intuition:
+        policy = HumanPolicy.NEVER
+    elif args.human_policy is not None:
+        policy = HumanPolicy(args.human_policy)
+    else:
+        # Default: AUTO — non-interactive unless an escalation trigger fires.
+        # For the initial intuition capture we don't yet have agent responses,
+        # so only the domain-level trigger (high-stakes domain) can apply here.
+        # The post-run escalation check below covers confidence/disagreement.
+        policy = HumanPolicy.AUTO
+
+    # ------------------------------------------------------------------
+    # Other feature flags
+    # ------------------------------------------------------------------
     adaptive_agents: bool = args.adaptive_agents
     target_latency_ms: Optional[int] = args.target_latency_ms
     agent_timeout_seconds: float = args.agent_timeout_seconds
+    verbose: bool = args.verbose
+    quiet: bool = args.quiet
+
+    # ------------------------------------------------------------------
+    # Progress callback
+    # ------------------------------------------------------------------
+    # In quiet mode: suppress all progress; in normal/verbose mode: print.
+    # Verbose mode uses the same callback but the orchestrator emits more.
+    def _progress(msg: str) -> None:
+        if not quiet:
+            _print(msg)
 
     # Get question
     question = args.question
@@ -492,17 +597,46 @@ def main(argv: Optional[list[str]] = None) -> None:
             _print("No question provided. Exiting.")
             sys.exit(0)
 
-    # When --auto-intuition is active, inform the user so they are not
-    # surprised that no interactive prompt appears.
-    if auto_intuition:
-        _print(
-            "\n🤖  Auto-intuition mode: generating human perspective automatically…\n"
-            if not HAS_RICH
-            else "\n[bold cyan]🤖  Auto-intuition mode: generating human perspective automatically…[/bold cyan]\n"
+    # ------------------------------------------------------------------
+    # Determine auto_intuition based on resolved policy
+    # (pre-run domain check for AUTO policy)
+    # ------------------------------------------------------------------
+    # For AUTO policy, check if the question touches high-stakes domains.
+    # We do a quick domain inference here to decide before running agents.
+    if policy == HumanPolicy.AUTO:
+        from src.intuition.human_intuition import IntuitionCapture
+        from src.intuition.human_policy import should_escalate
+        # Use scored-only domain inference: only domains with actual keyword
+        # hits count for escalation.  Using the full infer_domains() would
+        # include ALL domains as a fallback for unrecognised questions (e.g.
+        # "What is 2+2?"), incorrectly triggering high-stakes escalation.
+        scored_domains = (
+            domains if domains is not None
+            else IntuitionCapture.infer_scored_domains(question)
         )
+        pre_run_interactive = should_escalate(scored_domains, responses=None, use_mcp=use_mcp)
+    else:
+        pre_run_interactive = decide_interactive(policy, domains or [], use_mcp=use_mcp)
+
+    auto_intuition: bool = not pre_run_interactive
+
+    # Inform the user of the active mode
+    if not quiet:
+        if auto_intuition:
+            _print(
+                "\n🤖  Auto-intuition mode: generating human perspective automatically…\n"
+                if not HAS_RICH
+                else "\n[bold cyan]🤖  Auto-intuition mode: generating human perspective automatically…[/bold cyan]\n"
+            )
+        else:
+            _print(
+                "\n🧠  Interactive mode: you will be prompted for your intuition.\n"
+                if not HAS_RICH
+                else "\n[bold cyan]🧠  Interactive mode: you will be prompted for your intuition.[/bold cyan]\n"
+            )
 
     # When --adaptive-agents is active, let the user know the loop is running.
-    if adaptive_agents:
+    if adaptive_agents and not quiet:
         _print(
             "🔄  Adaptive agent loop enabled — will expand domains as needed.\n"
             if not HAS_RICH
@@ -523,9 +657,12 @@ def main(argv: Optional[list[str]] = None) -> None:
         adaptive_agents=adaptive_agents,
         target_latency_ms=target_latency_ms,
         agent_timeout_seconds=agent_timeout_seconds,
+        verbose=verbose,
+        progress_callback=_progress,
     ) as orchestrator:
-        _print("\n⏳  Querying domain experts…\n" if not HAS_RICH
-               else "\n[bold yellow]⏳  Querying domain experts…[/bold yellow]\n")
+        if not quiet:
+            _print("\n⏳  Querying domain experts…\n" if not HAS_RICH
+                   else "\n[bold yellow]⏳  Querying domain experts…[/bold yellow]\n")
         result = orchestrator.run(question, domains=domains)
 
     workflow_mode = WorkflowMapMode(args.workflow_map)

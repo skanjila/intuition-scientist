@@ -250,6 +250,26 @@ class IntuitionCapture:
         return IntuitionCapture._infer_domains(text)
 
     @staticmethod
+    def infer_scored_domains(text: str) -> list[Domain]:
+        """Return only the domains that have at least one keyword match in *text*.
+
+        Unlike :meth:`infer_domains`, this method never falls back to the full
+        domain list.  It returns an empty list when no keywords match at all.
+        Use this when you need to know whether a question *genuinely* touches
+        a specific domain (e.g. for escalation-policy checks), rather than
+        when you need a non-empty list of candidates for agent selection.
+        """
+        text_lower = text.lower()
+        scores: dict[Domain, int] = {d: 0 for d in Domain}
+        for domain, keywords in _DOMAIN_KEYWORDS.items():
+            for kw in keywords:
+                if kw in text_lower:
+                    scores[domain] += 1
+        relevant = [(d, s) for d, s in scores.items() if s > 0]
+        relevant.sort(key=lambda x: x[1], reverse=True)
+        return [d for d, _ in relevant]
+
+    @staticmethod
     def _infer_domains(text: str) -> list[Domain]:
         text_lower = text.lower()
         scores: dict[Domain, int] = {d: 0 for d in Domain}
