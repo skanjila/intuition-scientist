@@ -54,7 +54,7 @@ except ImportError:
 # ---------------------------------------------------------------------------
 # Domain name mapping for CLI flags
 # ---------------------------------------------------------------------------
-from src.models import Domain, WeighingResult
+from src.models import Domain, WeighingResult, WorkflowMapMode
 
 _DOMAIN_MAP: dict[str, Domain] = {
     # Core science / engineering
@@ -120,7 +120,7 @@ _DOMAIN_MAP: dict[str, Domain] = {
 # ---------------------------------------------------------------------------
 
 
-def _display_result(result: WeighingResult) -> None:
+def _display_result(result: WeighingResult, workflow_mode: WorkflowMapMode = WorkflowMapMode.STANDARD) -> None:
     """Print the WeighingResult in a human-readable format."""
     _rule()
     _print()
@@ -197,6 +197,17 @@ def _display_result(result: WeighingResult) -> None:
     _rule("Recommendations")
     for i, rec in enumerate(result.recommendations, 1):
         _print(f"  {i}. {rec}")
+
+    # ---- Workflow map (configurable verbosity) ----
+    if workflow_mode is not WorkflowMapMode.OFF:
+        from src.workflow import build_workflow_trace, render_workflow
+
+        _use_mcp = any(r.mcp_context for r in result.agent_responses)
+        trace = build_workflow_trace(result, use_mcp=_use_mcp)
+        workflow_text = render_workflow(trace, workflow_mode)
+        if workflow_text:
+            _rule("Agentic Workflow")
+            _print(workflow_text)
 
     _rule()
     _print()
@@ -312,6 +323,25 @@ def _build_parser() -> argparse.ArgumentParser:
             "(default: 512, or 384 when --fast is set)."
         ),
     )
+    parser.add_argument(
+        "--workflow-map",
+        default="standard",
+        choices=["off", "compact", "standard", "deep"],
+        metavar="MODE",
+        help=(
+            "Verbosity of the agentic workflow map appended to each answer. "
+            "Choices: off, compact, standard (default), deep. "
+            "'deep' includes a Mermaid diagram, inputs & context, assumptions, "
+            "plan, tool-call plan & results, intermediate artifacts, and next actions."
+        ),
+    )
+    parser.add_argument(
+        "--explain-workflow",
+        action="store_const",
+        const="deep",
+        dest="workflow_map",
+        help="Alias for --workflow-map deep.",
+    )
     return parser
 
 
@@ -408,7 +438,8 @@ def main(argv: Optional[list[str]] = None) -> None:
                else "\n[bold yellow]⏳  Querying domain experts…[/bold yellow]\n")
         result = orchestrator.run(question, domains=domains)
 
-    _display_result(result)
+    workflow_mode = WorkflowMapMode(args.workflow_map)
+    _display_result(result, workflow_mode=workflow_mode)
 
 
 if __name__ == "__main__":
