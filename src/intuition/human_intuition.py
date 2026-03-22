@@ -11,14 +11,22 @@ The ``IntuitionCapture`` class works in two modes:
 * **Interactive** (default): prompts the user via stdin/stdout.
 * **Programmatic**: accepts a pre-built ``HumanIntuition`` directly, which is
   useful for testing or when the caller already has the intuition data.
+
+The module also exposes :func:`generate_auto_intuition` for the non-interactive
+``--auto-intuition`` CLI mode, which synthesises a plausible human-like
+intuition response without blocking on stdin.
 """
 
 from __future__ import annotations
 
 import re
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from src.models import Domain, HumanIntuition
+
+if TYPE_CHECKING:
+    # Avoid a circular import at runtime; only needed for type annotations.
+    from src.llm.base import LLMBackend
 
 # Keywords that map natural-language phrases to domains
 _DOMAIN_KEYWORDS: dict[Domain, list[str]] = {
@@ -280,3 +288,129 @@ class IntuitionCapture:
                 print(f"  Please enter a number between {min_val} and {max_val}.")
             except ValueError:
                 print("  Please enter a numeric value (e.g. 0.7).")
+
+
+# ---------------------------------------------------------------------------
+# Auto-intuition generation (non-interactive mode)
+# ---------------------------------------------------------------------------
+
+
+def generate_auto_intuition(
+    question: str,
+    *,
+    backend: Optional["LLMBackend"] = None,
+) -> HumanIntuition:
+    """Generate a lightweight "human intuition" response without user prompting.
+
+    This is used by the ``--auto-intuition`` CLI mode to synthesise a plausible
+    non-expert perspective on *question* without blocking on stdin.
+
+    Strategy
+    --------
+    1. Infer the most relevant domain(s) from *question* using the same
+       keyword-matching heuristic as interactive capture.
+    2. If an LLM backend is available, issue a short "quick-think" prompt
+       asking the model to role-play as a curious non-expert and share their
+       gut feeling.  The prompt is intentionally lightweight (≤ 120 tokens)
+       so the auto-intuition pass does not dominate wall-clock time.
+    3. If no backend is available (offline / mock mode), fall back to a
+       domain-templated placeholder answer that is clearly labelled.
+
+    The returned :class:`~src.models.HumanIntuition` uses moderate confidence
+    (0.5) to signal that it represents a plausible but uncertain human estimate
+    rather than a carefully considered human judgment.  Downstream consumers
+    (the weighing system, debate engine, etc.) treat it identically to an
+    interactively captured intuition.
+
+    Parameters
+    ----------
+    question:
+        The question to generate intuition for.
+    backend:
+        Optional LLM backend.  When supplied a short "quick-think" prompt is
+        issued; otherwise a keyword-templated fallback is used.
+    """
+    inferred_domains = IntuitionCapture.infer_domains(question)
+    primary_domain = inferred_domains[0] if inferred_domains else None
+    domain_label = (
+        primary_domain.value.replace("_", " ") if primary_domain else "general"
+    )
+
+    if backend is not None:
+        # Ask the model to mimic a thoughtful non-expert's gut reaction.
+        # Keeping max_tokens low (120) ensures this stays a lightweight pass.
+        system_prompt = (
+            "You are a curious, intelligent non-expert. "
+            "Give a short intuitive (gut-feeling) answer to the question below. "
+            "Do NOT use technical jargon — respond as a thoughtful layperson would. "
+            "Keep the answer to 2-3 sentences. "
+            "Then write one sentence of reasoning starting with 'Because '."
+        )
+        user_prompt = f"Question: {question}\n\nAnswer:"
+        try:
+            raw = backend.generate(system_prompt, user_prompt, max_tokens=120)
+            # Split answer from reasoning if "Because " marker is present
+            if "Because " in raw:
+                parts = raw.split("Because ", 1)
+                intuitive_answer = parts[0].strip()
+                reasoning = "Because " + parts[1].strip()
+            else:
+                intuitive_answer = raw.strip()
+                reasoning = (
+                    f"Auto-generated intuition based on {domain_label} domain analysis."
+                )
+        except Exception:
+            # LLM call failed — fall back gracefully to template answer
+            intuitive_answer = _template_answer(question, domain_label)
+            reasoning = (
+                f"Auto-generated intuition based on {domain_label} domain analysis."
+            )
+    else:
+        intuitive_answer = _template_answer(question, domain_label)
+        reasoning = (
+            f"Auto-generated intuition based on {domain_label} domain analysis."
+        )
+
+    return HumanIntuition(
+        question=question,
+        intuitive_answer=intuitive_answer,
+        confidence=0.5,
+        reasoning=reasoning,
+        domain_guesses=inferred_domains[:3],
+    )
+
+
+def _template_answer(question: str, domain_label: str) -> str:
+    """Return a domain-appropriate placeholder answer for offline auto-intuition.
+
+    The templates are deliberately written in first-person "gut feeling" style
+    to mimic how a thoughtful non-expert would frame their initial reaction.
+    """
+    q_lower = question.lower()
+
+    if any(w in q_lower for w in ("what is", "what are", "define", "explain")):
+        return (
+            f"My intuition is that this is a core concept in {domain_label} "
+            "that involves fundamental principles I have encountered before, "
+            "though I am not entirely sure of the specifics."
+        )
+    if any(w in q_lower for w in ("how does", "how do", "how can", "how to")):
+        return (
+            f"I think this works through some kind of iterative or systematic process "
+            f"in {domain_label}, where components interact to produce the observed effect."
+        )
+    if any(w in q_lower for w in ("why does", "why do", "why is", "why are", "why")):
+        return (
+            f"My gut says this happens because of underlying constraints or natural laws "
+            f"in {domain_label} that push the system toward a stable state."
+        )
+    if any(w in q_lower for w in ("when", "where", "who")):
+        return (
+            "My intuition says the context matters a lot here — there is not a single "
+            "universal answer but rather it depends on the specific situation."
+        )
+    return (
+        f"Based on my general intuition about {domain_label}, "
+        "I believe the answer involves balancing competing factors "
+        "in a way that optimises for the key outcome."
+    )

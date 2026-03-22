@@ -274,6 +274,43 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--auto-intuition",
+        action="store_true",
+        default=False,
+        help=(
+            "Skip the interactive human-intuition prompt. "
+            "Instead, the system auto-generates a lightweight intuition response "
+            "using keyword heuristics and (when an LLM backend is available) a "
+            "short quick-think pass. Default behaviour (interactive prompt) is "
+            "unchanged unless this flag is supplied."
+        ),
+    )
+    parser.add_argument(
+        "--adaptive-agents",
+        action="store_true",
+        default=False,
+        help=(
+            "Enable the evolving adaptive agent-selection loop. "
+            "Instead of querying a fixed set of domain agents the orchestrator "
+            "starts with the 3 most relevant agents and expands only if "
+            "confidence/coverage is insufficient. "
+            "Use together with --target-latency-ms to cap wall-clock expansion time. "
+            "Default (fixed domain set) is unchanged unless this flag is supplied."
+        ),
+    )
+    parser.add_argument(
+        "--target-latency-ms",
+        type=int,
+        default=None,
+        metavar="MS",
+        help=(
+            "Wall-clock budget in milliseconds for the adaptive agent loop "
+            "(--adaptive-agents). The loop stops expanding when this limit is "
+            "exceeded even if the confidence threshold has not been reached. "
+            "Ignored when --adaptive-agents is not set."
+        ),
+    )
+    parser.add_argument(
         "--domains",
         nargs="+",
         default=None,
@@ -421,6 +458,13 @@ def main(argv: Optional[list[str]] = None) -> None:
                 _print(f"Unknown domain '{d}'. Choices: {', '.join(_DOMAIN_MAP)}")
                 sys.exit(1)
 
+    # ------------------------------------------------------------------
+    # New feature flags
+    # ------------------------------------------------------------------
+    auto_intuition: bool = args.auto_intuition
+    adaptive_agents: bool = args.adaptive_agents
+    target_latency_ms: Optional[int] = args.target_latency_ms
+
     # Get question
     question = args.question
     if not question:
@@ -433,6 +477,23 @@ def main(argv: Optional[list[str]] = None) -> None:
             _print("No question provided. Exiting.")
             sys.exit(0)
 
+    # When --auto-intuition is active, inform the user so they are not
+    # surprised that no interactive prompt appears.
+    if auto_intuition:
+        _print(
+            "\n🤖  Auto-intuition mode: generating human perspective automatically…\n"
+            if not HAS_RICH
+            else "\n[bold cyan]🤖  Auto-intuition mode: generating human perspective automatically…[/bold cyan]\n"
+        )
+
+    # When --adaptive-agents is active, let the user know the loop is running.
+    if adaptive_agents:
+        _print(
+            "🔄  Adaptive agent loop enabled — will expand domains as needed.\n"
+            if not HAS_RICH
+            else "[bold cyan]🔄  Adaptive agent loop enabled — will expand domains as needed.[/bold cyan]\n"
+        )
+
     # Import here to keep startup fast when --help is used
     from src.orchestrator.agent_orchestrator import AgentOrchestrator
 
@@ -443,6 +504,9 @@ def main(argv: Optional[list[str]] = None) -> None:
         max_domains=max_domains,
         agent_max_tokens=agent_max_tokens,
         synthesis_max_tokens=synthesis_max_tokens,
+        auto_intuition=auto_intuition,
+        adaptive_agents=adaptive_agents,
+        target_latency_ms=target_latency_ms,
     ) as orchestrator:
         _print("\n⏳  Querying domain experts…\n" if not HAS_RICH
                else "\n[bold yellow]⏳  Querying domain experts…[/bold yellow]\n")
