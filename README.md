@@ -1,701 +1,197 @@
-# Human Intuition Scientist
+# Human Intuition Scientist — Architecture and Design
 
 A multi-agent AI system that weighs **human intuition** against **domain-expert AI reasoning** and **MCP/tool-sourced evidence** to produce structured, transparent answers to complex questions.
 
-## Features at a glance
-
-| Feature | Description |
-|---|---|
-| **24 domain agents** | Science, industry, enterprise, mastery, research, and experiment domains |
-| **Dual-pipeline** | Every agent runs an *intuition path* (knowledge only) **and** a *tool/MCP path* (web-grounded), then blends them with intelligent weights |
-| **Iterative hard-problem tutors** | Physics and Signal Processing agents select the *hardest applicable problem type* and guide learners step-by-step with checkpoints and targeted hints |
-| **Experiment Runner** | Classifies which questions warrant experiments, then generates a structured set of targeted experiments (hypotheses, variables, runnable Python/NumPy snippets) — non-experimentable questions receive direct expert analysis instead |
-| **Auto-intuition mode** | `--auto-intuition` skips the interactive prompt and auto-generates a human perspective via keyword heuristics + optional LLM quick-think |
-| **Adaptive agent loop** | `--adaptive-agents` starts with 3 agents and expands only when confidence is insufficient, with optional `--target-latency-ms` budget |
-| **Debate harness** | Structured multi-party debate: human vs. tool evidence vs. agents |
-| **Interview coach** | Socratic FAANG interview prep with 100+ practice problems and hints |
-| **Model sweep** | Cycle across any open-source or free-tier model backends; compare results |
-| **Free-only models** | Anthropic and OpenAI are disabled; only free/open backends supported |
+> **Quick links**
+> - 📋 [SCENARIOS.md](SCENARIOS.md) — how to run every mode with expected output
+> - 🧪 [RUNNING_TESTS.md](RUNNING_TESTS.md) — step-by-step test instructions
+> - 🤖 [docs/AGENT_WORKFLOWS.md](docs/AGENT_WORKFLOWS.md) — optimized workflow guide for all 24 agents
+> - 🎛️ [docs/ORCHESTRATOR_WORKFLOWS.md](docs/ORCHESTRATOR_WORKFLOWS.md) — orchestrator configuration and composition patterns
 
 ---
 
 ## Table of contents
 
-1. [macOS (Apple Silicon) + Ollama Quickstart](#macos-apple-silicon--ollama-quickstart)
-2. [Prerequisites](#prerequisites)
-3. [Installation](#installation)
-4. [Running the app](#running-the-app)
-5. [Supported model backends](#supported-model-backends)
-6. [Domain agents](#domain-agents)
-7. [Modes of operation](#modes-of-operation)
-8. [Running the test suite](#running-the-test-suite)
-9. [Model sweep tests](#model-sweep-tests)
-10. [Project structure](#project-structure)
+1. [System overview](#system-overview)
+2. [End-to-end architecture](#end-to-end-architecture)
+3. [Human involvement policy](#human-involvement-policy)
+4. [Dual-pipeline weight blending](#dual-pipeline-weight-blending)
+5. [Domain agents](#domain-agents)
+6. [Weighing and synthesis pipeline](#weighing-and-synthesis-pipeline)
+7. [Adaptive agent loop](#adaptive-agent-loop)
+8. [Supported model backends](#supported-model-backends)
+9. [Project structure](#project-structure)
+10. [Installation](#installation)
+11. [Environment variable reference](#environment-variable-reference)
 
 ---
 
-## macOS (Apple Silicon) + Ollama Quickstart
+## System overview
 
-> Recommended setup for **M1 / M2 / M3 / M4** Macs (tested on M4 Max 48 GB).
-
-```bash
-# 1) Install Ollama
-curl -fsSL https://ollama.com/install.sh | sh
-
-# 2) Start the server (auto-starts on macOS; safe to run again)
-ollama serve
-
-# 3) Pull a recommended model
-ollama pull qwen2.5:7b        # fast, great quality/latency balance
-# or
-ollama pull llama3.1:8b       # slightly stronger, slightly slower
-
-# 4) Clone and set up the repo
-git clone https://github.com/skanjila/intuition-scientist.git
-cd intuition-scientist
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-
-# 5) Run — fast preset (lowest latency on Apple Silicon)
-python main.py --provider ollama:qwen2.5:7b --fast \
-  --question "How does attention in transformers relate to adaptive filtering?"
-
-# 6) Keep Ollama warm between runs (avoids reload cost)
-export OLLAMA_KEEP_ALIVE=30m
-ollama ps   # model should appear in the "running" column
-```
-
-**What `--fast` does on Apple Silicon:**
-
-| Setting | `--fast` value | Standard default |
-|---|---|---|
-| `--max-workers` | **1** | 7 |
-| `--max-domains` | **3** | unlimited |
-| MCP internet search | **off** | on |
-| `--agent-max-tokens` | **256** | 1024 |
-| `--synthesis-max-tokens` | **384** | 512 |
-
-Need more quality? Keep `--fast` but allow more agents:
-
-```bash
-python main.py --provider ollama:qwen2.5:7b --fast --max-domains 5
-```
-
----
-
-## Prerequisites
-
-| Requirement | Version | Notes |
-|---|---|---|
-| Python | 3.11 or 3.12 | 3.12 recommended |
-| pip | any recent | comes with Python |
-| git | any | to clone the repo |
-| Ollama *(optional)* | latest | for local open-source models |
-| llama.cpp *(optional)* | latest | for GGUF model files |
-
----
-
-## Installation
-
-```bash
-# 1. Clone the repository
-git clone https://github.com/skanjila/intuition-scientist.git
-cd intuition-scientist
-
-# 2. Create and activate a virtual environment (recommended)
-python3 -m venv .venv
-source .venv/bin/activate          # macOS / Linux
-# .venv\Scripts\activate           # Windows
-
-# 3. Install dependencies
-pip install -r requirements.txt
-
-# 4. (Optional) copy the environment template and fill in API keys
-cp .env.example .env               # if the file exists
-```
-
-No API keys are required to run in **mock mode** (the default).
-
----
-
-## Running the app
-
-### Interactive session walk-through
-
-The default mode is fully interactive. Here is what a typical session looks like step by step:
-
-```
-$ python main.py
-
-======================================================================
-🧪  Welcome to the Human Intuition Scientist
-======================================================================
-
-Enter your question: How does attention work in transformers?
-```
-
-After you type your question and press **Enter**, the CLI prompts for your intuitive answer:
-
-```
-======================================================================
-🧠  HUMAN INTUITION CAPTURE
-======================================================================
-
-Question:
-  How does attention work in transformers?
-
-Your intuitive answer (press Enter twice when done):
-> It computes weighted sums of values based on query-key similarity.
->                          ← blank line to finish
-Confidence (0.0–1.0, default 0.5): 0.7
-Reasoning (optional, press Enter to skip): Each token attends to all others via dot-product scores.
-```
-
-> **Tip — finishing the intuition prompt**: type your answer, then press
-> **Enter** once (to go to the next line) and **Enter again on a blank line**
-> to submit. This is the only interactive step; everything else runs automatically.
-
-Once your intuition is captured, the system queries domain agents in parallel and prints a full `WeighingResult`:
-
-```
-⏳  Querying domain experts…
-
-══════════════════════════ Human Intuition ══════
-  Answer     : It computes weighted sums of values…
-  Confidence : 70%
-
-══════════════════ Domain-by-Domain Alignment ═══
-  Neural Networks     similarity=0.85  agent_conf=90%
-  Deep Learning       similarity=0.82  agent_conf=88%
-  …
-
-══════════════════════ Synthesized Answer ════════
-  …
-
-══════════════════════════ Intuition Accuracy ════
-  78.3%  (weighted alignment across all domain experts)
-```
-
-### Fully interactive (mock backend — no model required)
-
-```bash
-python main.py
-```
-
-You will be prompted for a question and your intuition. The system runs all relevant domain agents using the mock backend (instant, offline, no GPU needed) and returns a `WeighingResult`.
-
-### Provide a question on the command line
-
-```bash
-python main.py --question "How does attention in transformers relate to adaptive filtering?"
-```
-
-You are still prompted for your intuition (confidence, reasoning). Add
-`--auto-intuition` to skip that prompt entirely (see below).
-
-### Skip the interactive prompt entirely
-
-```bash
-# No stdin required — great for CI, scripting, or quick checks
-python main.py --question "How does attention work?" --auto-intuition --no-mcp
-```
-
-### Use a specific free model backend
-
-```bash
-# Ollama (must have Ollama running: https://ollama.com)
-python main.py --provider ollama:llama3.1:8b
-
-# llama.cpp (provide path to your GGUF file)
-python main.py --provider "llamacpp:models/llama-3.1-8b-instruct-q4_k_m.gguf"
-
-# Groq free-tier (requires GROQ_API_KEY env var)
-python main.py --provider groq:llama-3.1-8b-instant
-
-# Together AI free-tier (requires TOGETHER_API_KEY env var)
-python main.py --provider together:meta-llama/Llama-3.1-8B-Instruct-Turbo
-
-# Cloudflare Workers AI (requires CF_ACCOUNT_ID and CF_API_TOKEN env vars)
-python main.py --provider "cloudflare:@cf/meta/llama-3.1-8b-instruct"
-
-# OpenRouter (requires OPENROUTER_API_KEY env var)
-python main.py --provider "openrouter:meta-llama/llama-3.1-8b-instruct:free"
-```
-
-### Restrict to specific domains
-
-```bash
-# Use domain shortcuts (see full list below)
-python main.py --domains physics nn dl
-
-# Signal processing — iterative hard-problem tutor
-python main.py --domains signal --question "Design a Wiener filter for noise cancellation"
-
-# Experiment runner — converts question to a structured experiment plan
-python main.py --domains experiment --question "Does gradient descent converge faster with momentum?"
-
-# Interview prep coaching
-python main.py --domains interview --question "Explain the two-pointer pattern"
-
-# PhD EE/LLM research
-python main.py --domains phd --question "How does Mamba relate to IIR filters?"
-
-# FAANG system design
-python main.py --domains faang --question "Design a rate limiter"
-```
-
-### Disable internet search (MCP)
-
-```bash
-python main.py --no-mcp
-```
-
-### Agentic workflow visibility (`--workflow-map`)
-
-Append a visual breakdown of the agentic reasoning pipeline to every answer.
-
-```bash
-# Default — standard map (Mermaid diagram + inputs & plan)
-python main.py --question "How does RLHF work?"
-
-# Deep mode — all sections: diagram, inputs, assumptions, plan,
-#   tool-call plan & results, intermediate artifacts, next actions
-python main.py --workflow-map deep --question "How does RLHF work?"
-
-# Compact — Mermaid diagram only
-python main.py --workflow-map compact --question "How does RLHF work?"
-
-# Off — no workflow section
-python main.py --workflow-map off --question "How does RLHF work?"
-
-# --explain-workflow is an alias for --workflow-map deep
-python main.py --explain-workflow --question "How does RLHF work?"
-```
-
-**Mode comparison:**
-
-| Mode | Mermaid diagram | Inputs & plan | Assumptions | Tool-call details | Intermediate artifacts | Next actions |
-|---|:---:|:---:|:---:|:---:|:---:|:---:|
-| `off` | — | — | — | — | — | — |
-| `compact` | ✅ | — | — | — | — | — |
-| `standard` *(default)* | ✅ | ✅ | — | — | — | — |
-| `deep` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-
-**Example deep-mode output (excerpt):**
-
-```
-## Workflow (Deep)
-
-### (A) Mermaid workflow diagram
-
-```mermaid
-flowchart TD
-  S0["Receive question"]
-  S1["MCP web search\n🔧 mcp_search"]
-  S2["Domain routing"]
-  ...
-  S0 --> S1
-  S1 --> S2
-  ...
-```
-
-### (B) Inputs & context
-- Question: "How does RLHF work?"
-- Domains queried: Neural Networks, Deep Learning, ...
-
-### (C) Assumptions
-- Human intuition was provided before agent inference (no leakage).
-...
-
-### (D) Plan
-1. Capture human intuitive answer and confidence.
-2. Route question to N relevant domain agent(s).
-...
-
-### (E) Tool-call plan & results
-- **mcp_search**: Retrieve up-to-date web evidence…
-  - Result: Web context retrieved for 3 domain(s)…
-
-### (F) Intermediate artifacts
-| Domain | Similarity | Agent Confidence |
-|---|---|---|
-| Neural Networks | 0.82 | 90% |
-...
-
-### (G) Next actions / options
-- Try `--domains <domain>` to drill into a specific area.
-...
-```
-
-### Interview prep mode (three agents: technical + algorithmic + psychological)
-
-```bash
-python main.py --mode interview --question "Solve the Trapping Rain Water problem"
-```
-
-### Physics / Signal Processing iterative tutor mode
-
-Both the `physics` and `signal` / `dsp` agents implement an **iterative
-hard-problem protocol**:
-
-1. The agent asks for your intuitive approach before revealing anything.
-2. It selects the *hardest applicable problem type* from its internal catalog
-   (10 categories ordered from hardest to easiest).
-3. The solution is structured as numbered **checkpoints** — the agent pauses
-   after each one so you can attempt the next step.
-4. Stuck? Ask for a hint; you receive the *minimum* nudge needed to proceed.
-5. After each major result the agent compares it to your initial intuition.
-
-```bash
-# Physics iterative tutor
-python main.py --domains physics --question "Derive the path integral for a harmonic oscillator"
-
-# Signal processing iterative tutor
-python main.py --domains signal --question "Design an optimal Wiener filter for speech enhancement"
-```
-
-### Experiment Runner mode
-
-The `experiment` / `simulate` agent first **classifies** whether a question
-can be meaningfully answered through lightweight computational experiments,
-then generates a structured set of targeted experiment specs for qualifying
-questions.
-
-#### Question classification
-
-The classifier scores questions on a continuous ``[-1.0, +1.0]`` scale using
-deterministic rule-based heuristics — no LLM required:
-
-| Signal | Δ score | Examples |
-|---|---|---|
-| Quantitative language | +0.30 | "how does X scale with Y", "what percentage" |
-| Causal relationship | +0.25 | "what effect does X have on Y", "does X cause Y" |
-| Probabilistic / stochastic | +0.25 | "probability of", "expected value", "Monte Carlo" |
-| Hypothesis-bearing | +0.25 | "is it true that", "prove that", "will X converge" |
-| Experiment verb | +0.20 | "simulate", "model", "benchmark", "test" |
-| Optimisation | +0.20 | "minimise", "find the optimal value of X" |
-| Comparative with metric | +0.20 | "which is faster in terms of Z" |
-| Pure definition | −0.40 | "what is the definition of", "define" |
-| Historical fact | −0.30 | "when was", "who invented" |
-| Recommendation only | −0.15 | "should I use", "which framework is best" |
-
-Questions with net score ≥ 0.15 receive a full experiment plan.
-
-#### Experiment types
-
-For qualifying questions the agent selects the best-fit experiment type(s):
-
-| Type | Use case |
+| Feature | Description |
 |---|---|
-| **Numeric sweep** | Vary one parameter, observe output trend |
-| **Monte Carlo** | Probabilistic claims, expected-value estimation |
-| **Toy analytical** | Exact small-system solution to test a hypothesis |
-| **Dimensional / scaling** | Derive the expected scaling law |
-| **Finite-difference** | Integrate an ODE/PDE numerically |
-| **Combinatorial** | Enumerate all small cases (N ≤ 20) |
-| **Perturbation / sensitivity** | Rank inputs by ∂output/∂input |
-| **Fermi estimate** | Order-of-magnitude bound before detailed calculation |
+| **24 domain agents** | Science, industry, enterprise, mastery, research, and experiment domains |
+| **Dual-pipeline** | Every agent runs an *intuition path* (knowledge only) **and** a *tool/MCP path* (web-grounded), then blends them with intelligent weights |
+| **Human involvement policy** | Configurable AUTO / ALWAYS / NEVER policy; AUTO escalates to interactive prompting only when the question is high-stakes, confidence is low, or agents strongly disagree |
+| **Iterative hard-problem tutors** | Physics and Signal Processing agents select the *hardest applicable problem type* and guide learners step-by-step with checkpoints and targeted hints |
+| **Experiment Runner** | Classifies which questions warrant experiments, then generates a structured set of targeted experiments (hypotheses, variables, runnable Python/NumPy snippets) |
+| **Auto-intuition mode** | `--non-interactive` (or legacy `--auto-intuition`) skips the interactive prompt; the system auto-generates a human perspective via keyword heuristics + optional LLM quick-think |
+| **Adaptive agent loop** | `--adaptive-agents` starts with 3 agents and expands only when confidence is insufficient, with optional `--target-latency-ms` budget |
+| **Debate harness** | Structured multi-party debate: human vs. tool evidence vs. agents |
+| **Interview coach** | Socratic FAANG interview prep with 100+ practice problems and hints |
+| **Model sweep** | Cycle across any open-source or free-tier model backends; compare results |
+| **Free-only models** | Anthropic and OpenAI are disabled; only free/open backends supported |
+| **Per-agent progress** | Observable logging of domain selection, agent start/finish, MCP results, and pipeline dominance |
 
-#### Usage
+---
 
-```bash
-# The agent classifies the question first — this one is experimentable
-# (causal + quantitative signals) and produces a numeric sweep + perturbation spec.
-python main.py --domains experiment \
-  --question "Does gradient descent converge faster with momentum on a quadratic loss?"
+## End-to-end architecture
 
-# Auto-intuition + experiment agent: fully non-interactive pipeline
-python main.py --domains experiment --auto-intuition \
-  --question "How does the learning rate affect the convergence speed?"
-
-# Adaptive loop: starts with 3 agents, expands to include experiment domain if needed
-python main.py --adaptive-agents --auto-intuition \
-  --question "How does L2 regularisation affect generalisation error?"
-
-# Non-experimentable question — agent returns direct expert analysis, no plan
-python main.py --domains experiment \
-  --question "What is the definition of backpropagation?"
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  CLI (main.py)                                                  │
+│  • Parses flags: --interactive, --non-interactive,              │
+│    --human-policy, --verbose, --quiet, --domains, --fast, …    │
+│  • Resolves HumanPolicy (AUTO / ALWAYS / NEVER)                 │
+│  • Wires progress_callback → terminal output                    │
+└─────────────────────────┬───────────────────────────────────────┘
+                          │
+                          ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  AgentOrchestrator (src/orchestrator/agent_orchestrator.py)    │
+│                                                                 │
+│  Step 1 — Human Intuition                                       │
+│    ├── AUTO policy + high-stakes domain → interactive capture   │
+│    ├── AUTO policy + normal domain → auto-generate intuition    │
+│    ├── ALWAYS policy → interactive capture (IntuitionCapture)   │
+│    └── NEVER policy → auto-generate (generate_auto_intuition)  │
+│                                                                 │
+│  Step 2 — Domain selection                                      │
+│    ├── Explicit --domains → use as given                        │
+│    ├── --adaptive-agents → _adaptive_select_and_run()           │
+│    └── Default → _select_domains() (keyword inference, ≥3)     │
+│                                                                 │
+│  Step 3 — Agent querying (_query_agents)                        │
+│    ├── ThreadPoolExecutor (max_workers parallel calls)          │
+│    ├── Per-agent progress emitted via progress_callback         │
+│    ├── Per-agent timeout (agent_timeout_seconds)                │
+│    └── Returns list[AgentResponse] in submission order          │
+│                                                                 │
+│  Step 4 — Weighing                                              │
+│    └── WeighingSystem.weigh(intuition, responses)               │
+│        → WeighingResult                                         │
+└─────────────────────────┬───────────────────────────────────────┘
+                          │
+          ┌───────────────┼───────────────────┐
+          ▼               ▼                   ▼
+┌──────────────┐  ┌──────────────┐  ┌──────────────────────────┐
+│ BaseAgent    │  │ MCPClient    │  │ WeighingSystem           │
+│ (per domain) │  │ (web search) │  │                          │
+│              │  │              │  │ • Compute alignment       │
+│ Pipeline A:  │  │ DuckDuckGo   │  │   scores (semantic sim.)  │
+│  LLM-only    │  │ zero-auth    │  │ • Synthesize final answer │
+│              │  │              │  │ • Score intuition accuracy│
+│ Pipeline B:  │  │ Returns MCP  │  │ • Generate recommendations│
+│  MCP context │  │ context used │  │                          │
+│  → LLM call  │  │ in Pipeline B│  └──────────────────────────┘
+│              │  │              │
+│ Blend A+B    │  └──────────────┘
+│ (weight pair)│
+└──────────────┘
 ```
 
-#### plan_experiments() API
+### Data flow
 
-```python
-from src.agents.experiment_runner_agent import ExperimentRunnerAgent
-from src.models import ExperimentPlan
-
-agent = ExperimentRunnerAgent()
-
-# Classify first (no LLM needed)
-experimentability = ExperimentRunnerAgent.classify_question(
-    "How does learning rate affect convergence speed?"
-)
-print(experimentability.is_experimentable)  # True
-print(experimentability.question_type)       # "quantitative-causal"
-print(experimentability.score)               # e.g. 0.55
-
-# Generate structured experiment plan (uses LLM if available, otherwise templates)
-plan: ExperimentPlan = agent.plan_experiments(
-    "How does learning rate affect convergence speed?"
-)
-for spec in plan.experiments:
-    print(spec.id, spec.category.value, spec.hypothesis)
-    print(spec.python_snippet)
+```
+Question
+    │
+    ├─ HumanIntuition (interactive or auto)
+    │       question, intuitive_answer, confidence, reasoning, domain_guesses
+    │
+    ├─ AgentResponse × N (one per domain)
+    │       domain, answer, reasoning, confidence,
+    │       mcp_context, intuition_weight, tool_weight
+    │
+    └─ WeighingResult
+            question, human_intuition, agent_responses,
+            alignment_scores, synthesized_answer,
+            overall_analysis, intuition_accuracy_pct, recommendations
 ```
 
 ---
 
-## Non-interactive and adaptive modes (`--auto-intuition`, `--adaptive-agents`)
+## Human involvement policy
 
-### `--auto-intuition` — skip the human prompt
+The policy is implemented in `src/intuition/human_policy.py` and is fully testable with no side-effects.
 
-By default the CLI pauses and prompts you for your intuitive answer before
-querying any agents.  `--auto-intuition` bypasses this entirely: the system
-synthesises a plausible non-expert perspective automatically using keyword
-heuristics + an optional short LLM "quick-think" pass.
+### Policy levels
 
-```bash
-# Fully non-interactive — no stdin required
-python main.py --question "How does RLHF work?" --auto-intuition --no-mcp
+| Policy | Flag | Behaviour |
+|---|---|---|
+| `AUTO` | *(default)* | Interactive only when an escalation trigger fires |
+| `ALWAYS` | `--interactive` / `--human-policy always` | Always prompt |
+| `NEVER` | `--non-interactive` / `--human-policy never` | Never prompt; always auto-generate |
 
-# Works with --question or interactive question entry
-python main.py --auto-intuition --no-mcp
-# (you are only asked for the question, never for your intuition)
-```
+### Escalation triggers (AUTO mode)
 
-The auto-generated intuition uses **moderate confidence (0.5)** — it is
-treated as a plausible but uncertain human estimate rather than a carefully
-considered judgment.  All downstream analysis (weighing, synthesis, accuracy
-scoring) behaves identically to the interactive path.
+The system escalates to interactive prompting when **any one** of these conditions fires:
 
-### `--adaptive-agents` — intelligent expanding agent loop
-
-Instead of querying a fixed set of domain agents, the adaptive loop:
-
-1. Starts with the **3 most relevant domains** (ranked by keyword matching).
-2. Queries them in parallel.
-3. Computes mean agent confidence across responses.
-4. If mean confidence ≥ 0.65 → **stop** (coverage is sufficient).
-5. Otherwise adds the next 2 highest-ranked domains and repeats.
-
-Stopping criteria (any one halts expansion):
-- Mean confidence ≥ 0.65
-- No remaining candidate domains
-- `--max-domains` ceiling reached
-- Wall-clock budget exceeded (`--target-latency-ms`)
-
-```bash
-# Adaptive loop — expands domains only if initial agents are uncertain
-python main.py --question "Explain the bias-variance tradeoff" \
-  --auto-intuition --adaptive-agents --no-mcp
-
-# With time budget: stop expanding after 5 seconds regardless of confidence
-python main.py --question "How does attention work in transformers?" \
-  --auto-intuition --adaptive-agents --target-latency-ms 5000 --no-mcp
-
-# Combine with --max-domains to cap the absolute maximum
-python main.py --question "How does quantum computing differ from classical?" \
-  --auto-intuition --adaptive-agents --max-domains 6 --no-mcp
-```
-
-### MCP interaction
-
-| Flags | MCP behaviour |
+| Trigger | Condition |
 |---|---|
-| *(default)* | MCP enabled |
-| `--no-mcp` | MCP disabled |
-| `--use-mcp` | MCP explicitly forced on (overrides `--fast` preset) |
-| `--auto-intuition` + *(default)* | MCP still enabled for agents |
-| `--auto-intuition --no-mcp` | No MCP, no interactive prompt — fastest mode |
+| **High-stakes domain** | The question is inferred to belong to Healthcare, Legal & Compliance, or Finance & Economics |
+| **Low overall confidence** | Mean agent confidence < 0.40 (after agents run) |
+| **High disagreement** | Max − min agent confidence spread > 0.45 |
+| **MCP expected but absent** | MCP is enabled, the question touches a tool-heavy domain, but no agent received any MCP context |
 
-### New CLI flags summary
+For domain-level escalation (high-stakes), the check runs *before* agents are queried so the system can switch to interactive capture immediately. The confidence and disagreement checks are available for post-run re-prompting in workflows that need it.
 
-| Flag | Type | Default | Description |
-|---|---|---|---|
-| `--auto-intuition` | flag | off | Skip interactive prompt; auto-generate human perspective |
-| `--adaptive-agents` | flag | off | Enable evolving agent-selection loop |
-| `--target-latency-ms MS` | integer | — | Wall-clock budget for adaptive loop (ms) |
-| `--agent-timeout-seconds SECS` | float | `30.0` | Max seconds to wait per agent before returning a low-confidence placeholder; prevents indefinite hangs |
+### Design rationale
 
-#### Recommended non-interactive usage (CI / scripting)
-
-Use `--auto-intuition --no-mcp` together with `--agent-timeout-seconds` to get
-a fully non-blocking, scriptable run:
-
-```bash
-# Fast CI check — no stdin, no network, 10 s per-agent ceiling
-python main.py \
-  --question "Does L2 regularization reduce overfitting?" \
-  --auto-intuition \
-  --no-mcp \
-  --agent-timeout-seconds 10 \
-  --max-domains 3
-
-# With a real local model backend
-python main.py \
-  --provider ollama:qwen2.5:7b \
-  --question "Explain gradient descent" \
-  --auto-intuition \
-  --no-mcp \
-  --agent-timeout-seconds 30
-```
+- **Default is non-interactive**: most questions do not need deep human judgment; making the default interactive forces users to type before seeing any results.
+- **Escalation keeps the human in the loop where it matters**: a question about warfarin interactions is different from "what is 2+2?".
+- **Policy is decoupled from the orchestrator**: `human_policy.py` has no imports from the orchestrator, making it independently testable.
 
 ---
 
-## Low latency on Mac (Ollama)
+## Dual-pipeline weight blending
 
-If you are running **Ollama on Apple Silicon** (M1/M2/M3/M4), use the `--fast`
-preset to get the shortest time-to-answer with reasonable quality.
+Every agent runs **both** pipelines for every question and blends the results:
 
-### Why answers can feel slow by default
+```
+Pipeline A — intuition (knowledge only)
+    System prompt: domain expert persona
+    LLM call: question → expert answer
 
-The orchestrator normally runs up to 7 agent LLM calls **plus** synthesis and
-analysis calls (each up to 1,024 tokens).  On a single local GPU, many
-concurrent generations compete for the same compute, which often *increases*
-end-to-end latency compared with running them one at a time.
+Pipeline B — tool (MCP-grounded)
+    MCP search: retrieve web evidence
+    System prompt: domain expert + evidence context
+    LLM call: question + evidence → grounded answer
 
-### Recommended command (`--fast` preset)
+Weight computation:
+    base_intuition  ←  domain type
+                        interpretive (legal, social, strategy): 0.65
+                        empirical (healthcare, finance, cyber):  0.40
+                        balanced (cs, physics, dl):              0.55
+    tool_boost      ←  MCP result quality × 0.20
+    type_modifier   ←  ±0.10 (factual "what/when" → +tool;
+                                analytical "why/how" → +intuition)
 
-```bash
-python main.py --provider ollama:qwen2.5:7b --fast \
-  --question "How does attention in transformers relate to adaptive filtering?"
+    tool_weight      = clamp(base_tool + tool_boost + type_modifier, 0.10, 0.75)
+    intuition_weight = 1.0 − tool_weight
 ```
 
-`--fast` applies these defaults (each can be overridden individually):
+The dominant pipeline provides the main answer text; the minority pipeline contributes a bracketed insight. Both weights are recorded in `AgentResponse` for full transparency and are visible in the per-agent progress log:
 
-| Setting | Fast preset | Standard default |
-|---|---|---|
-| `--max-workers` | **1** | 7 |
-| `--max-domains` | **3** | unlimited |
-| MCP internet search | **off** | on |
-| `--agent-max-tokens` | **256** | 1024 |
-| `--synthesis-max-tokens` | **384** | 512 |
-
-### Override individual settings
-
-```bash
-# Fast preset but re-enable MCP web search
-python main.py --provider ollama:qwen2.5:7b --fast --use-mcp
-
-# Fast preset with more agents (higher quality, slower)
-python main.py --provider ollama:qwen2.5:7b --fast --max-domains 5
-
-# Explicit workers and token caps without the full preset
-python main.py --provider ollama:qwen2.5:7b --max-workers 2 \
-  --agent-max-tokens 512 --synthesis-max-tokens 512 --no-mcp
 ```
-
-### Quick performance diagnostic
-
-Run the same question twice to confirm the bottleneck:
-
-```bash
-# Fast settings (~3× speedup on a typical M4 Max)
-time python main.py --provider ollama:qwen2.5:7b --fast \
-  --question "Explain gradient descent"
-
-# Standard defaults
-time python main.py --provider ollama:qwen2.5:7b \
-  --question "Explain gradient descent"
-```
-
-If `--fast` is dramatically quicker, the bottleneck is **too many agents /
-too much concurrency / too many tokens** rather than raw GPU throughput.
-
-### Keeping Ollama warm
-
-Make sure your model stays loaded between questions to avoid repeated warm-up
-costs.  In a separate terminal:
-
-```bash
-ollama ps   # should show your model in the "running" column
-```
-
-If the model is not listed, it will be reloaded on every question — add
-`OLLAMA_KEEP_ALIVE=30m` to your environment to keep it resident.
-
----
-
-## Supported model backends
-
-> **Note:** Anthropic (`claude-*`) and OpenAI (`gpt-*`) are intentionally **not supported**. Only free and open-source providers are allowed.
-
-### Local backends (always free)
-
-| Backend | Spec format | Setup |
-|---|---|---|
-| **Mock** | `mock` | Built-in, no setup needed, fully offline |
-| **Ollama** | `ollama:<model>` | Install [Ollama](https://ollama.com), run `ollama pull llama3.1:8b` |
-| **llama.cpp** | `llamacpp:<path/to/model.gguf>` | Build [llama.cpp](https://github.com/ggerganov/llama.cpp), download a GGUF |
-
-#### Ollama quick start
-
-```bash
-# Install Ollama (macOS/Linux)
-curl -fsSL https://ollama.com/install.sh | sh
-
-# Pull a model
-ollama pull llama3.1:8b
-ollama pull qwen2.5:7b
-
-# Start the server (it auto-starts on macOS)
-ollama serve
-
-# Run the app
-python main.py --provider ollama:llama3.1:8b
-```
-
-#### llama.cpp quick start
-
-```bash
-# Build llama.cpp
-git clone https://github.com/ggerganov/llama.cpp
-cd llama.cpp && make -j
-
-# Download a GGUF model (example: from HuggingFace)
-# Place it in intuition-scientist/models/
-
-# Run the app (from repo root)
-python main.py --provider "llamacpp:models/llama-3.1-8b-instruct-q4_k_m.gguf"
-```
-
-### Hosted free-tier backends (require env vars)
-
-| Backend | Spec format | Required env var(s) |
-|---|---|---|
-| **Groq** | `groq:<model>` | `GROQ_API_KEY` — [console.groq.com](https://console.groq.com) |
-| **Together AI** | `together:<model>` | `TOGETHER_API_KEY` — [api.together.ai](https://api.together.ai) |
-| **Cloudflare Workers AI** | `cloudflare:<model>` | `CF_ACCOUNT_ID` + `CF_API_TOKEN` |
-| **OpenRouter** | `openrouter:<model>` | `OPENROUTER_API_KEY` — [openrouter.ai](https://openrouter.ai) |
-
-Set env vars in your shell or in a `.env` file:
-
-```bash
-export GROQ_API_KEY=gsk_...
-export TOGETHER_API_KEY=...
-export CF_ACCOUNT_ID=...
-export CF_API_TOKEN=...
-export OPENROUTER_API_KEY=sk-or-...
-```
-
-### Recommended starter model list
-
-```bash
-export INTUITION_SCIENTIST_MODELS="\
-ollama:llama3.1:8b,\
-ollama:qwen2.5:7b,\
-llamacpp:models/llama-3.1-8b-instruct-q4_k_m.gguf,\
-groq:llama-3.1-8b-instant,\
-together:meta-llama/Llama-3.1-8B-Instruct-Turbo,\
-cloudflare:@cf/meta/llama-3.1-8b-instruct,\
-openrouter:meta-llama/llama-3.1-8b-instruct:free"
+  ✓  [Deep Learning] done — conf=82%, pipeline=tool (MCP: results)
+  ✓  [Legal Compliance] done — conf=74%, pipeline=intuition (MCP: none)
 ```
 
 ---
 
 ## Domain agents
 
-The system has **24 domain agents** in four groups:
+The system has **24 domain agents** in four groups.
 
 ### Core science & engineering
 
@@ -706,11 +202,11 @@ The system has **24 domain agents** in four groups:
 | Neural Networks | `nn` | Deep theory, signal processing connections, next-gen architectures |
 | Social Science | `social` | Behaviour, psychology, sociology, game theory |
 | Space Science | `space` | Astrophysics + 7 planetary exploration scenarios |
-| Physics | `physics` | Quantum, relativity, condensed matter, statistical mechanics — iterative hard-problem tutor |
+| Physics | `physics` | Quantum, relativity, condensed matter — iterative hard-problem tutor |
 | Deep Learning | `dl` | Transformers, SSMs, diffusion, scaling, alignment |
 | Signal Processing | `signal` / `dsp` | Filter design, spectral estimation, adaptive filters — iterative hard-problem tutor |
 
-### High-economic-value industry
+### High-economic-value industry (high-stakes for AUTO policy)
 
 | Domain | Shortcut | Description |
 |---|---|---|
@@ -738,128 +234,65 @@ The system has **24 domain agents** in four groups:
 | Algorithms & Programming | `algo` | Python, Rust, Go; all DS&A patterns |
 | Interview Prep | `interview` / `faang` | 100+ LeetCode patterns + system design + STAR coaching |
 | EE LLM Research | `phd` / `ee_llm` | LLMs, signal processing, LLM safety — PhD-level advisor |
-| Experiment Runner | `experiment` / `simulate` | Classifies questions by experimentability, then generates targeted experiment specs (numeric sweep, Monte Carlo, sensitivity analysis, etc.) with runnable Python/NumPy snippets |
+| Experiment Runner | `experiment` / `simulate` | Classifies questions by experimentability; generates experiment specs with runnable Python/NumPy snippets |
 
 ---
 
-## Modes of operation
+## Weighing and synthesis pipeline
 
-### Standard mode (default)
-Weighs human intuition against domain agents using the dual-pipeline.
-```bash
-python main.py --mode run
-```
+`WeighingSystem.weigh(intuition, agent_responses)` produces a `WeighingResult`:
 
-### Debate mode
-Runs a structured debate: human intuition vs. MCP/web tool evidence vs. agents.
-Each round surfaces agreements and disagreements explicitly.
-```bash
-python main.py --mode debate --question "Is microservices the right default architecture?"
-```
+1. **Alignment scoring** — for each agent response, compute semantic similarity to the human intuition using token-overlap heuristics. Extract key agreements and divergences.
+2. **Synthesis** — combine agent answers (weighted by confidence) into a single synthesized answer via an LLM call.
+3. **Overall analysis** — deep analysis of the collective response, surfacing tensions and supporting evidence via an LLM call.
+4. **Intuition accuracy** — weighted mean of alignment scores, expressed as a percentage. Weights are proportional to agent confidence.
+5. **Recommendations** — actionable next steps derived from the analysis.
 
-### Interview prep mode
-Routes through `InterviewPrepAgent` (technical) + `AlgorithmsProgrammingAgent` (algo depth) + `SocialScienceAgent` (mental preparation). Returns scored `InterviewResult`.
-```bash
-python main.py --mode interview --question "How do you find the kth largest element?"
-```
+The full `WeighingResult` is printed to the terminal with sections for: Human Intuition, Domain-by-Domain Alignment (table), Expert Agent Answers, Synthesized Answer, Deep Analysis, Intuition Accuracy Score, Recommendations, and Agentic Workflow (if `--workflow-map` is not `off`).
 
 ---
 
-## Running the test suite
+## Adaptive agent loop
 
-All tests run fully **offline** — no LLM, no network, no API keys required.
-The mock backend is used automatically.
+When `--adaptive-agents` is set, the orchestrator uses an expanding loop instead of a fixed domain set:
 
-### Prerequisites
-
-```bash
-# pytest is the only test dependency (already in requirements.txt)
-pip install -r requirements.txt
-
-# Optional: coverage reporting
-pip install pytest-cov
+```
+1. Rank all domains by keyword relevance to question + intuition.
+2. Query the top 3 (initial batch) in parallel.
+3. Compute mean confidence.
+4. If mean ≥ 0.65 → stop.
+5. Otherwise add next 2 highest-ranked domains and re-query only those.
+6. Repeat until a stopping criterion is met:
+     • Mean confidence ≥ 0.65
+     • No remaining candidate domains
+     • max_domains ceiling reached
+     • target_latency_ms wall-clock budget exceeded
 ```
 
-### Run the full suite
-
-```bash
-python -m pytest tests/ -v
-```
-
-Expected output: **436 passed, 37 skipped** (sweep tests are skipped by default in CI).
-
-### Common filtering options
-
-```bash
-# Run a single test file
-python -m pytest tests/test_orchestrator.py -v
-
-# Run a single test class
-python -m pytest tests/test_orchestrator.py::TestOrchestatorRunOffline -v
-
-# Run a single test by name (substring match)
-python -m pytest tests/ -k "timeout" -v
-
-# Stop on first failure
-python -m pytest tests/ -x -v
-
-# Parallel execution (install pytest-xdist first)
-pip install pytest-xdist
-python -m pytest tests/ -n auto -v
-```
-
-### Run with coverage
-
-```bash
-python -m pytest tests/ --cov=src --cov-report=term-missing
-```
-
-### Run only a specific test file group
-
-```bash
-# Core orchestrator tests
-python -m pytest tests/test_orchestrator.py -v
-
-# Agent feature tests
-python -m pytest tests/test_agents.py tests/test_new_agents.py -v
-
-# Workflow rendering
-python -m pytest tests/test_workflow.py -v
-
-# Auto-intuition and adaptive loop
-python -m pytest tests/test_auto_intuition_adaptive.py -v
-
-# Full large suite (all domains × modes)
-python -m pytest tests/test_large_suite.py -v
-```
+This balances thoroughness against latency: a question with a clear, confident answer in 3 domains never wastes time on 20 more.
 
 ---
 
-## Model sweep tests
+## Supported model backends
 
-Model sweep tests cycle through real backends and compare results across models.
-They are **disabled by default** to keep CI fast and free.
+> **Note:** Anthropic (`claude-*`) and OpenAI (`gpt-*`) are intentionally **not supported**. Only free and open-source providers are allowed.
 
-### Enable sweep tests
+### Local backends (always free)
 
-```bash
-# Use only the mock backend (always passes, no model needed)
-RUN_MODEL_SWEEP=1 python -m pytest tests/test_large_suite.py -v
+| Backend | Spec format | Notes |
+|---|---|---|
+| **Mock** | `mock` | Built-in offline backend; instant, deterministic; used in all tests |
+| **Ollama** | `ollama:<model>` | Local inference via [Ollama](https://ollama.com) |
+| **llama.cpp** | `llamacpp:<path/to/model.gguf>` | Local inference from a GGUF file |
 
-# Use real models (Ollama must be running with models pulled)
-RUN_MODEL_SWEEP=1 \
-INTUITION_SCIENTIST_MODELS="ollama:llama3.1:8b,ollama:qwen2.5:7b" \
-python -m pytest tests/test_large_suite.py -v
+### Hosted free-tier backends
 
-# Full sweep with all providers
-RUN_MODEL_SWEEP=1 \
-INTUITION_SCIENTIST_MODELS="ollama:llama3.1:8b,groq:llama-3.1-8b-instant,together:meta-llama/Llama-3.1-8B-Instruct-Turbo" \
-GROQ_API_KEY=your_key \
-TOGETHER_API_KEY=your_key \
-python -m pytest tests/test_model_sweep.py tests/test_large_suite.py -v
-```
-
-The sweep tests are parametrised: each model × each domain × each mode (run / debate / evaluate_models) runs as a separate test case. Missing backends are skipped gracefully — they never fail the suite.
+| Backend | Spec format | Required env var(s) |
+|---|---|---|
+| **Groq** | `groq:<model>` | `GROQ_API_KEY` |
+| **Together AI** | `together:<model>` | `TOGETHER_API_KEY` |
+| **Cloudflare Workers AI** | `cloudflare:<model>` | `CF_ACCOUNT_ID` + `CF_API_TOKEN` |
+| **OpenRouter** | `openrouter:<model>` | `OPENROUTER_API_KEY` |
 
 ---
 
@@ -867,66 +300,98 @@ The sweep tests are parametrised: each model × each domain × each mode (run / 
 
 ```
 intuition-scientist/
-├── main.py                          # CLI entry point
+├── main.py                             # CLI entry point
 ├── requirements.txt
+├── README.md                           # Architecture and design (this file)
+├── SCENARIOS.md                        # How to run scenarios with expected output
+├── RUNNING_TESTS.md                    # Step-by-step test instructions
 ├── src/
 │   ├── agents/
-│   │   ├── base_agent.py            # Dual-pipeline base (intuition + MCP weights)
+│   │   ├── base_agent.py               # Dual-pipeline base (intuition + MCP weights)
 │   │   ├── algorithms_programming_agent.py
 │   │   ├── biotech_genomics_agent.py
 │   │   ├── climate_energy_agent.py
 │   │   ├── computer_science_agent.py
 │   │   ├── cybersecurity_agent.py
-│   │   ├── deep_learning_agent.py   # Cutting-edge DL + next-gen architectures
-│   │   ├── ee_llm_research_agent.py # PhD: LLMs + signal processing + safety
+│   │   ├── deep_learning_agent.py
+│   │   ├── ee_llm_research_agent.py
 │   │   ├── electrical_engineering_agent.py
 │   │   ├── enterprise_architecture_agent.py
-│   │   ├── experiment_runner_agent.py  # NEW: experiment plans + runnable snippets
+│   │   ├── experiment_runner_agent.py  # Experiment classification + plan generation
 │   │   ├── finance_economics_agent.py
 │   │   ├── healthcare_agent.py
-│   │   ├── interview_prep_agent.py  # 100+ DS&A practice problems + system design
+│   │   ├── interview_prep_agent.py     # 100+ DS&A practice problems + system design
 │   │   ├── legal_compliance_agent.py
 │   │   ├── marketing_growth_agent.py
-│   │   ├── neural_networks_agent.py # Deep theory + signal processing + next-gen
+│   │   ├── neural_networks_agent.py
 │   │   ├── organizational_behavior_agent.py
-│   │   ├── physics_agent.py         # Iterative hard-problem tutor (10 problem types)
-│   │   ├── signal_processing_agent.py  # NEW: iterative hard-problem tutor (10 types)
+│   │   ├── physics_agent.py            # Iterative hard-problem tutor (10 problem types)
+│   │   ├── signal_processing_agent.py  # Iterative hard-problem tutor (10 problem types)
 │   │   ├── social_science_agent.py
-│   │   ├── space_science_agent.py   # + 7 planetary exploration scenarios
+│   │   ├── space_science_agent.py
 │   │   ├── strategy_intelligence_agent.py
 │   │   └── supply_chain_agent.py
 │   ├── analysis/
-│   │   ├── debate_engine.py         # Multi-party debate harness
-│   │   └── weighing_system.py       # Human intuition vs. agent weighing
+│   │   ├── debate_engine.py            # Multi-party debate harness
+│   │   └── weighing_system.py          # Human intuition vs. agent weighing + synthesis
 │   ├── intuition/
-│   │   └── human_intuition.py       # Capture + domain inference
+│   │   ├── human_intuition.py          # IntuitionCapture + domain inference + auto-generate
+│   │   └── human_policy.py             # HumanPolicy enum + escalation triggers
 │   ├── llm/
-│   │   ├── base.py                  # LLMBackend protocol
-│   │   ├── registry.py              # Free-only provider registry
-│   │   ├── mock_backend.py          # Offline CI backend
-│   │   ├── ollama_backend.py        # Local Ollama
-│   │   ├── llamacpp_backend.py      # Local llama.cpp
-│   │   ├── groq_backend.py          # Groq free-tier
-│   │   ├── together_backend.py      # Together AI free-tier
-│   │   ├── cloudflare_backend.py    # Cloudflare Workers AI
-│   │   └── openrouter_backend.py    # OpenRouter
+│   │   ├── base.py                     # LLMBackend protocol
+│   │   ├── registry.py                 # Free-only provider registry (blocks Anthropic/OpenAI)
+│   │   ├── mock_backend.py             # Offline CI backend
+│   │   ├── ollama_backend.py
+│   │   ├── llamacpp_backend.py
+│   │   ├── groq_backend.py
+│   │   ├── together_backend.py
+│   │   ├── cloudflare_backend.py
+│   │   └── openrouter_backend.py
 │   ├── mcp/
-│   │   └── mcp_client.py            # DuckDuckGo web search (zero-auth)
-│   ├── models.py                    # All dataclasses (WeighingResult, DebateResult, …)
-│   └── orchestrator/
-│       └── agent_orchestrator.py    # run() / debate() / interview_prep() / evaluate_models()
+│   │   └── mcp_client.py               # DuckDuckGo web search (zero-auth)
+│   ├── models.py                       # All dataclasses (WeighingResult, AgentResponse, …)
+│   ├── orchestrator/
+│   │   └── agent_orchestrator.py       # run() / debate() / interview_prep() / evaluate_models()
+│   └── workflow/
+│       └── …                           # Workflow trace + rendering (off/compact/standard/deep)
 └── tests/
     ├── fixtures/
-    │   └── qa.yaml                  # Complex Q&A with human intuition prefills
+    │   └── qa.yaml                     # Complex Q&A with human intuition prefills
     ├── test_agents.py
-    ├── test_large_suite.py          # 200+ tests across all domains
+    ├── test_auto_intuition_adaptive.py
+    ├── test_experiment_runner.py
+    ├── test_human_policy.py            # Human policy + escalation + new CLI flags
+    ├── test_intuition.py
+    ├── test_large_suite.py             # 200+ tests across all domains × modes
     ├── test_llm_registry.py
-    ├── test_model_sweep.py          # Opt-in: RUN_MODEL_SWEEP=1
+    ├── test_model_sweep.py             # Opt-in: RUN_MODEL_SWEEP=1
     ├── test_models.py
-    ├── test_new_agents.py           # NEW: tests for signal processing + experiment runner
+    ├── test_new_agents.py
     ├── test_orchestrator.py
-    └── test_weighing.py
+    ├── test_performance_features.py
+    ├── test_weighing_system.py
+    └── test_workflow.py
 ```
+
+---
+
+## Installation
+
+```bash
+# 1. Clone the repository
+git clone https://github.com/skanjila/intuition-scientist.git
+cd intuition-scientist
+
+# 2. Create and activate a virtual environment
+python3 -m venv .venv
+source .venv/bin/activate          # macOS / Linux
+# .venv\Scripts\activate           # Windows
+
+# 3. Install dependencies
+pip install -r requirements.txt
+```
+
+No API keys are required to run in **mock mode** (the default).
 
 ---
 
@@ -941,23 +406,6 @@ intuition-scientist/
 | `CF_ACCOUNT_ID` | *(unset)* | Cloudflare account ID |
 | `CF_API_TOKEN` | *(unset)* | Cloudflare API token |
 | `OPENROUTER_API_KEY` | *(unset)* | OpenRouter API key |
-
----
-
-## Dual-pipeline weight blending
-
-Each agent computes a pair of weights `(intuition_weight, tool_weight)` that sum to 1.0:
-
-```
-base_intuition  ←  domain type (interpretive domains: 0.65; empirical: 0.40; balanced: 0.55)
-tool_boost      ←  MCP result quality × 0.20   (more evidence → higher tool weight)
-type_modifier   ←  ±0.10 (factual "what/when" → +tool; analytical "why/how" → +intuition)
-
-tool_weight     = clamp(base_tool + tool_boost + type_modifier, 0.10, 0.75)
-intuition_weight = 1.0 - tool_weight
-```
-
-Both paths always run. The dominant path provides the main answer text; the minority path adds a bracketed insight. The `AgentResponse` records both weights for full transparency.
 
 ---
 

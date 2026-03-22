@@ -606,11 +606,15 @@ def main(argv: Optional[list[str]] = None) -> None:
     if policy == HumanPolicy.AUTO:
         from src.intuition.human_intuition import IntuitionCapture
         from src.intuition.human_policy import should_escalate
-        inferred_domains = (
+        # Use scored-only domain inference: only domains with actual keyword
+        # hits count for escalation.  Using the full infer_domains() would
+        # include ALL domains as a fallback for unrecognised questions (e.g.
+        # "What is 2+2?"), incorrectly triggering high-stakes escalation.
+        scored_domains = (
             domains if domains is not None
-            else IntuitionCapture.infer_domains(question)
+            else IntuitionCapture.infer_scored_domains(question)
         )
-        pre_run_interactive = should_escalate(inferred_domains, responses=None, use_mcp=use_mcp)
+        pre_run_interactive = should_escalate(scored_domains, responses=None, use_mcp=use_mcp)
     else:
         pre_run_interactive = decide_interactive(policy, domains or [], use_mcp=use_mcp)
 
