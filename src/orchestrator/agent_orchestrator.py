@@ -19,7 +19,7 @@ Additional entry points
 
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from typing import Optional
 
 from src.agents.base_agent import BaseAgent
@@ -144,6 +144,11 @@ class AgentOrchestrator:
         When the budget is exceeded the loop stops expanding even if the
         confidence threshold has not been reached.  Ignored when
         ``adaptive_agents`` is ``False``.
+    agent_timeout_seconds:
+        Maximum seconds to wait for each agent response before treating it
+        as timed out.  A timed-out agent returns a low-confidence placeholder
+        ``AgentResponse`` instead of blocking the run indefinitely.
+        Default: 30.0 seconds.
 
     .. deprecated::
         ``llm_provider`` and ``model`` keyword arguments are accepted but
@@ -162,6 +167,7 @@ class AgentOrchestrator:
         auto_intuition: bool = False,
         adaptive_agents: bool = False,
         target_latency_ms: Optional[int] = None,
+        agent_timeout_seconds: float = 30.0,
         # Legacy kwargs — accepted but ignored
         llm_provider: str = "mock",
         model: Optional[str] = None,
@@ -178,6 +184,7 @@ class AgentOrchestrator:
         self.auto_intuition = auto_intuition
         self.adaptive_agents = adaptive_agents
         self.target_latency_ms = target_latency_ms
+        self.agent_timeout_seconds = agent_timeout_seconds
 
         self._mcp_client = MCPClient() if use_mcp else None
         self._weighing_system = WeighingSystem(
@@ -767,21 +774,39 @@ class AgentOrchestrator:
     def _query_agents(
         self, agents: list[BaseAgent], question: str
     ) -> list[AgentResponse]:
-        """Query all agents in parallel; collect results preserving order."""
+        """Query all agents in parallel; collect results preserving order.
+
+        Each agent runs in its own thread.  ``future.result()`` is called with
+        ``self.agent_timeout_seconds`` so that a stuck agent can never block the
+        whole run indefinitely.  Timed-out agents get a low-confidence
+        placeholder ``AgentResponse``; the underlying thread is left to finish
+        in the background (threads cannot be forcibly killed in Python).
+        """
         if not agents:
             return []
 
         responses: dict[int, AgentResponse] = {}
 
-        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            future_to_idx = {
-                executor.submit(agent.answer, question): idx
-                for idx, agent in enumerate(agents)
-            }
-            for future in as_completed(future_to_idx):
-                idx = future_to_idx[future]
+        # We manage the executor manually so we can call shutdown(wait=False)
+        # after collecting all results — this lets us return promptly even when
+        # some agent threads are still sleeping past their timeout.
+        executor = ThreadPoolExecutor(max_workers=self.max_workers)
+        try:
+            futures = [
+                executor.submit(agent.answer, question) for agent in agents
+            ]
+            for idx, future in enumerate(futures):
                 try:
-                    responses[idx] = future.result()
+                    responses[idx] = future.result(timeout=self.agent_timeout_seconds)
+                except FuturesTimeoutError:
+                    responses[idx] = AgentResponse(
+                        domain=agents[idx].domain,
+                        answer=(
+                            f"Agent timed out after {self.agent_timeout_seconds:.1f}s."
+                        ),
+                        reasoning="",
+                        confidence=0.1,
+                    )
                 except Exception as exc:
                     responses[idx] = AgentResponse(
                         domain=agents[idx].domain,
@@ -789,6 +814,9 @@ class AgentOrchestrator:
                         reasoning="",
                         confidence=0.1,
                     )
+        finally:
+            # Don't block on still-running threads — return promptly.
+            executor.shutdown(wait=False)
 
         return [responses[i] for i in sorted(responses)]
 
