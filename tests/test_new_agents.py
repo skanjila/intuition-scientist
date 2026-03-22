@@ -141,6 +141,13 @@ class TestExperimentRunnerAgentPrompt:
             assert isinstance(name, str) and len(name) > 0
             assert isinstance(desc, str) and len(desc) > 0
 
+    def test_prompt_contains_experiment_catalog(self):
+        """Verify the experiment catalog is embedded in the system prompt."""
+        agent = ExperimentRunnerAgent(mcp_client=None)
+        prompt = agent._build_system_prompt()
+        for name, _ in ExperimentRunnerAgent.EXPERIMENT_TYPES:
+            assert name in prompt, f"Experiment type '{name}' missing from prompt"
+
 
 # ---------------------------------------------------------------------------
 # Answer / response structure (mock mode)

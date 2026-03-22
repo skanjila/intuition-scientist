@@ -548,7 +548,7 @@ pip install pytest-cov
 python -m pytest tests/ --cov=src --cov-report=term-missing
 ```
 
-Expected output: **≥ 305 passed, 35 skipped** (sweep tests skip in CI).
+Expected output: **338 passed, 37 skipped** (sweep tests skip in CI).
 
 ---
 
