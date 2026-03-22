@@ -9,7 +9,9 @@ A multi-agent AI system that weighs **human intuition** against **domain-expert 
 | **24 domain agents** | Science, industry, enterprise, mastery, research, and experiment domains |
 | **Dual-pipeline** | Every agent runs an *intuition path* (knowledge only) **and** a *tool/MCP path* (web-grounded), then blends them with intelligent weights |
 | **Iterative hard-problem tutors** | Physics and Signal Processing agents select the *hardest applicable problem type* and guide learners step-by-step with checkpoints and targeted hints |
-| **Experiment Runner** | Converts any question into a structured experiment plan (hypotheses, variables, runnable Python snippets) and compares outcomes to the user's intuition |
+| **Experiment Runner** | Classifies which questions warrant experiments, then generates a structured set of targeted experiments (hypotheses, variables, runnable Python/NumPy snippets) — non-experimentable questions receive direct expert analysis instead |
+| **Auto-intuition mode** | `--auto-intuition` skips the interactive prompt and auto-generates a human perspective via keyword heuristics + optional LLM quick-think |
+| **Adaptive agent loop** | `--adaptive-agents` starts with 3 agents and expands only when confidence is insufficient, with optional `--target-latency-ms` budget |
 | **Debate harness** | Structured multi-party debate: human vs. tool evidence vs. agents |
 | **Interview coach** | Socratic FAANG interview prep with 100+ practice problems and hints |
 | **Model sweep** | Cycle across any open-source or free-tier model backends; compare results |
@@ -289,22 +291,164 @@ python main.py --domains signal --question "Design an optimal Wiener filter for 
 
 ### Experiment Runner mode
 
-The `experiment` / `simulate` agent converts any question into a full
-**experiment protocol**:
+The `experiment` / `simulate` agent first **classifies** whether a question
+can be meaningfully answered through lightweight computational experiments,
+then generates a structured set of targeted experiment specs for qualifying
+questions.
 
-1. Elicits your intuition and confidence level first.
-2. Enumerates 2-4 falsifiable hypotheses.
-3. For each hypothesis selects an appropriate lightweight experiment type
-   (numeric sweep, Monte Carlo, toy analytic example, etc.).
-4. Produces step-by-step protocols **and** copy-pasteable Python/NumPy
-   snippets you can run locally (no external credentials required).
-5. Compares predicted/observed outcomes to your initial intuition.
+#### Question classification
+
+The classifier scores questions on a continuous ``[-1.0, +1.0]`` scale using
+deterministic rule-based heuristics — no LLM required:
+
+| Signal | Δ score | Examples |
+|---|---|---|
+| Quantitative language | +0.30 | "how does X scale with Y", "what percentage" |
+| Causal relationship | +0.25 | "what effect does X have on Y", "does X cause Y" |
+| Probabilistic / stochastic | +0.25 | "probability of", "expected value", "Monte Carlo" |
+| Hypothesis-bearing | +0.25 | "is it true that", "prove that", "will X converge" |
+| Experiment verb | +0.20 | "simulate", "model", "benchmark", "test" |
+| Optimisation | +0.20 | "minimise", "find the optimal value of X" |
+| Comparative with metric | +0.20 | "which is faster in terms of Z" |
+| Pure definition | −0.40 | "what is the definition of", "define" |
+| Historical fact | −0.30 | "when was", "who invented" |
+| Recommendation only | −0.15 | "should I use", "which framework is best" |
+
+Questions with net score ≥ 0.15 receive a full experiment plan.
+
+#### Experiment types
+
+For qualifying questions the agent selects the best-fit experiment type(s):
+
+| Type | Use case |
+|---|---|
+| **Numeric sweep** | Vary one parameter, observe output trend |
+| **Monte Carlo** | Probabilistic claims, expected-value estimation |
+| **Toy analytical** | Exact small-system solution to test a hypothesis |
+| **Dimensional / scaling** | Derive the expected scaling law |
+| **Finite-difference** | Integrate an ODE/PDE numerically |
+| **Combinatorial** | Enumerate all small cases (N ≤ 20) |
+| **Perturbation / sensitivity** | Rank inputs by ∂output/∂input |
+| **Fermi estimate** | Order-of-magnitude bound before detailed calculation |
+
+#### Usage
 
 ```bash
-# Experiment runner
+# The agent classifies the question first — this one is experimentable
+# (causal + quantitative signals) and produces a numeric sweep + perturbation spec.
 python main.py --domains experiment \
   --question "Does gradient descent converge faster with momentum on a quadratic loss?"
+
+# Auto-intuition + experiment agent: fully non-interactive pipeline
+python main.py --domains experiment --auto-intuition \
+  --question "How does the learning rate affect the convergence speed?"
+
+# Adaptive loop: starts with 3 agents, expands to include experiment domain if needed
+python main.py --adaptive-agents --auto-intuition \
+  --question "How does L2 regularisation affect generalisation error?"
+
+# Non-experimentable question — agent returns direct expert analysis, no plan
+python main.py --domains experiment \
+  --question "What is the definition of backpropagation?"
 ```
+
+#### plan_experiments() API
+
+```python
+from src.agents.experiment_runner_agent import ExperimentRunnerAgent
+from src.models import ExperimentPlan
+
+agent = ExperimentRunnerAgent()
+
+# Classify first (no LLM needed)
+experimentability = ExperimentRunnerAgent.classify_question(
+    "How does learning rate affect convergence speed?"
+)
+print(experimentability.is_experimentable)  # True
+print(experimentability.question_type)       # "quantitative-causal"
+print(experimentability.score)               # e.g. 0.55
+
+# Generate structured experiment plan (uses LLM if available, otherwise templates)
+plan: ExperimentPlan = agent.plan_experiments(
+    "How does learning rate affect convergence speed?"
+)
+for spec in plan.experiments:
+    print(spec.id, spec.category.value, spec.hypothesis)
+    print(spec.python_snippet)
+```
+
+---
+
+## Non-interactive and adaptive modes (`--auto-intuition`, `--adaptive-agents`)
+
+### `--auto-intuition` — skip the human prompt
+
+By default the CLI pauses and prompts you for your intuitive answer before
+querying any agents.  `--auto-intuition` bypasses this entirely: the system
+synthesises a plausible non-expert perspective automatically using keyword
+heuristics + an optional short LLM "quick-think" pass.
+
+```bash
+# Fully non-interactive — no stdin required
+python main.py --question "How does RLHF work?" --auto-intuition --no-mcp
+
+# Works with --question or interactive question entry
+python main.py --auto-intuition --no-mcp
+# (you are only asked for the question, never for your intuition)
+```
+
+The auto-generated intuition uses **moderate confidence (0.5)** — it is
+treated as a plausible but uncertain human estimate rather than a carefully
+considered judgment.  All downstream analysis (weighing, synthesis, accuracy
+scoring) behaves identically to the interactive path.
+
+### `--adaptive-agents` — intelligent expanding agent loop
+
+Instead of querying a fixed set of domain agents, the adaptive loop:
+
+1. Starts with the **3 most relevant domains** (ranked by keyword matching).
+2. Queries them in parallel.
+3. Computes mean agent confidence across responses.
+4. If mean confidence ≥ 0.65 → **stop** (coverage is sufficient).
+5. Otherwise adds the next 2 highest-ranked domains and repeats.
+
+Stopping criteria (any one halts expansion):
+- Mean confidence ≥ 0.65
+- No remaining candidate domains
+- `--max-domains` ceiling reached
+- Wall-clock budget exceeded (`--target-latency-ms`)
+
+```bash
+# Adaptive loop — expands domains only if initial agents are uncertain
+python main.py --question "Explain the bias-variance tradeoff" \
+  --auto-intuition --adaptive-agents --no-mcp
+
+# With time budget: stop expanding after 5 seconds regardless of confidence
+python main.py --question "How does attention work in transformers?" \
+  --auto-intuition --adaptive-agents --target-latency-ms 5000 --no-mcp
+
+# Combine with --max-domains to cap the absolute maximum
+python main.py --question "How does quantum computing differ from classical?" \
+  --auto-intuition --adaptive-agents --max-domains 6 --no-mcp
+```
+
+### MCP interaction
+
+| Flags | MCP behaviour |
+|---|---|
+| *(default)* | MCP enabled |
+| `--no-mcp` | MCP disabled |
+| `--use-mcp` | MCP explicitly forced on (overrides `--fast` preset) |
+| `--auto-intuition` + *(default)* | MCP still enabled for agents |
+| `--auto-intuition --no-mcp` | No MCP, no interactive prompt — fastest mode |
+
+### New CLI flags summary
+
+| Flag | Type | Description |
+|---|---|---|
+| `--auto-intuition` | flag | Skip interactive prompt; auto-generate human perspective |
+| `--adaptive-agents` | flag | Enable evolving agent-selection loop |
+| `--target-latency-ms MS` | integer | Wall-clock budget for adaptive loop (ms) |
 
 ---
 
@@ -504,7 +648,7 @@ The system has **24 domain agents** in four groups:
 | Algorithms & Programming | `algo` | Python, Rust, Go; all DS&A patterns |
 | Interview Prep | `interview` / `faang` | 100+ LeetCode patterns + system design + STAR coaching |
 | EE LLM Research | `phd` / `ee_llm` | LLMs, signal processing, LLM safety — PhD-level advisor |
-| Experiment Runner | `experiment` / `simulate` | Converts questions into structured experiment plans with runnable Python snippets and human-intuition comparison |
+| Experiment Runner | `experiment` / `simulate` | Classifies questions by experimentability, then generates targeted experiment specs (numeric sweep, Monte Carlo, sensitivity analysis, etc.) with runnable Python/NumPy snippets |
 
 ---
 
@@ -548,7 +692,7 @@ pip install pytest-cov
 python -m pytest tests/ --cov=src --cov-report=term-missing
 ```
 
-Expected output: **338 passed, 37 skipped** (sweep tests skip in CI).
+Expected output: **436 passed, 37 skipped** (sweep tests skip in CI).
 
 ---
 

@@ -385,6 +385,16 @@ def _template_answer(question: str, domain_label: str) -> str:
 
     The templates are deliberately written in first-person "gut feeling" style
     to mimic how a thoughtful non-expert would frame their initial reaction.
+
+    Parameters
+    ----------
+    question:
+        The question to generate a template answer for.  The question's
+        interrogative structure ("what is", "how does", "why", etc.) determines
+        which template is selected.
+    domain_label:
+        Human-readable domain name (e.g. ``"neural networks"``) used to
+        make the templated answer feel domain-relevant.
     """
     q_lower = question.lower()
 

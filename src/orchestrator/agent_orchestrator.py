@@ -621,7 +621,10 @@ class AgentOrchestrator:
         # Minimum number of domains in the initial batch.
         _ADAPTIVE_INITIAL: int = 3
 
-        # Build the full ranked candidate list from keyword relevance
+        # Build the full ranked candidate list from keyword relevance.
+        # IntuitionCapture.infer_domains() is a pure static keyword-scoring
+        # utility that happens to live on IntuitionCapture for historical
+        # reasons; it has no dependency on interactive user I/O.
         combined = f"{question} {intuition.intuitive_answer} {intuition.reasoning}"
         all_candidates: list[Domain] = IntuitionCapture.infer_domains(combined)
 
