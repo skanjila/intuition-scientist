@@ -241,6 +241,59 @@ class ModelRunResult:
     duration_seconds: float = 0.0
 
 
+# ---------------------------------------------------------------------------
+# Workflow trace / agentic-visibility models
+# ---------------------------------------------------------------------------
+
+
+class WorkflowMapMode(str, Enum):
+    """Controls how much workflow detail is appended to each answer."""
+
+    OFF = "off"
+    COMPACT = "compact"
+    STANDARD = "standard"
+    DEEP = "deep"
+
+
+@dataclass
+class WorkflowStep:
+    """One step in the agentic workflow trace."""
+
+    #: Short label shown in the Mermaid diagram
+    label: str
+    #: Human-readable description of what happened / why
+    description: str = ""
+    #: Optional tool name used in this step (e.g. ``"mcp_search"``)
+    tool: str = ""
+    #: Summary of the tool result (no raw secrets)
+    tool_result_summary: str = ""
+
+
+@dataclass
+class WorkflowTrace:
+    """Structured trace of the agentic reasoning workflow for one request.
+
+    This is produced *after* the orchestrator completes a run so that no
+    chain-of-thought is exposed—only an explainability summary.
+    """
+
+    question: str
+    #: Ordered steps the system took (used to build the Mermaid diagram)
+    steps: list[WorkflowStep] = field(default_factory=list)
+    #: Key inputs fed into the pipeline (question, domains, settings)
+    inputs_context: list[str] = field(default_factory=list)
+    #: Explicit assumptions the system made
+    assumptions: list[str] = field(default_factory=list)
+    #: High-level numbered plan
+    plan: list[str] = field(default_factory=list)
+    #: Tool-call entries: ``(tool_name, reason, result_summary)``
+    tool_calls: list[tuple[str, str, str]] = field(default_factory=list)
+    #: Intermediate artifacts: checklists, tables, acceptance criteria
+    intermediate_artifacts: list[str] = field(default_factory=list)
+    #: Suggested next actions for the user
+    next_actions: list[str] = field(default_factory=list)
+
+
 @dataclass
 class ModelEvaluationResult:
     """Cross-model evaluation summary produced by

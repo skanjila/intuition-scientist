@@ -124,6 +124,83 @@ python main.py --domains faang --question "Design a rate limiter"
 python main.py --no-mcp
 ```
 
+### Agentic workflow visibility (`--workflow-map`)
+
+Append a visual breakdown of the agentic reasoning pipeline to every answer.
+
+```bash
+# Default — standard map (Mermaid diagram + inputs & plan)
+python main.py --question "How does RLHF work?"
+
+# Deep mode — all sections: diagram, inputs, assumptions, plan,
+#   tool-call plan & results, intermediate artifacts, next actions
+python main.py --workflow-map deep --question "How does RLHF work?"
+
+# Compact — Mermaid diagram only
+python main.py --workflow-map compact --question "How does RLHF work?"
+
+# Off — no workflow section
+python main.py --workflow-map off --question "How does RLHF work?"
+
+# --explain-workflow is an alias for --workflow-map deep
+python main.py --explain-workflow --question "How does RLHF work?"
+```
+
+**Mode comparison:**
+
+| Mode | Mermaid diagram | Inputs & plan | Assumptions | Tool-call details | Intermediate artifacts | Next actions |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|
+| `off` | — | — | — | — | — | — |
+| `compact` | ✅ | — | — | — | — | — |
+| `standard` *(default)* | ✅ | ✅ | — | — | — | — |
+| `deep` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+
+**Example deep-mode output (excerpt):**
+
+```
+## Workflow (Deep)
+
+### (A) Mermaid workflow diagram
+
+```mermaid
+flowchart TD
+  S0["Receive question"]
+  S1["MCP web search\n🔧 mcp_search"]
+  S2["Domain routing"]
+  ...
+  S0 --> S1
+  S1 --> S2
+  ...
+```
+
+### (B) Inputs & context
+- Question: "How does RLHF work?"
+- Domains queried: Neural Networks, Deep Learning, ...
+
+### (C) Assumptions
+- Human intuition was provided before agent inference (no leakage).
+...
+
+### (D) Plan
+1. Capture human intuitive answer and confidence.
+2. Route question to N relevant domain agent(s).
+...
+
+### (E) Tool-call plan & results
+- **mcp_search**: Retrieve up-to-date web evidence…
+  - Result: Web context retrieved for 3 domain(s)…
+
+### (F) Intermediate artifacts
+| Domain | Similarity | Agent Confidence |
+|---|---|---|
+| Neural Networks | 0.82 | 90% |
+...
+
+### (G) Next actions / options
+- Try `--domains <domain>` to drill into a specific area.
+...
+```
+
 ### Interview prep mode (three agents: technical + algorithmic + psychological)
 
 ```bash
