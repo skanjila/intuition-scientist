@@ -112,6 +112,16 @@ _DOMAIN_MAP: dict[str, Domain] = {
     "ee_llm_research": Domain.EE_LLM_RESEARCH,
     "phd": Domain.EE_LLM_RESEARCH,
     "llm_safety": Domain.EE_LLM_RESEARCH,
+    # Signal processing domain
+    "signal_processing": Domain.SIGNAL_PROCESSING,
+    "signal": Domain.SIGNAL_PROCESSING,
+    "dsp": Domain.SIGNAL_PROCESSING,
+    "filter_design": Domain.SIGNAL_PROCESSING,
+    # Experiment runner domain
+    "experiment": Domain.EXPERIMENT_RUNNER,
+    "experiment_runner": Domain.EXPERIMENT_RUNNER,
+    "experiments": Domain.EXPERIMENT_RUNNER,
+    "simulate": Domain.EXPERIMENT_RUNNER,
 }
 
 

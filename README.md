@@ -6,8 +6,10 @@ A multi-agent AI system that weighs **human intuition** against **domain-expert 
 
 | Feature | Description |
 |---|---|
-| **22 domain agents** | Science, industry, enterprise, mastery, and research domains |
+| **24 domain agents** | Science, industry, enterprise, mastery, research, and experiment domains |
 | **Dual-pipeline** | Every agent runs an *intuition path* (knowledge only) **and** a *tool/MCP path* (web-grounded), then blends them with intelligent weights |
+| **Iterative hard-problem tutors** | Physics and Signal Processing agents select the *hardest applicable problem type* and guide learners step-by-step with checkpoints and targeted hints |
+| **Experiment Runner** | Converts any question into a structured experiment plan (hypotheses, variables, runnable Python snippets) and compares outcomes to the user's intuition |
 | **Debate harness** | Structured multi-party debate: human vs. tool evidence vs. agents |
 | **Interview coach** | Socratic FAANG interview prep with 100+ practice problems and hints |
 | **Model sweep** | Cycle across any open-source or free-tier model backends; compare results |
@@ -17,15 +19,66 @@ A multi-agent AI system that weighs **human intuition** against **domain-expert 
 
 ## Table of contents
 
-1. [Prerequisites](#prerequisites)
-2. [Installation](#installation)
-3. [Running the app](#running-the-app)
-4. [Supported model backends](#supported-model-backends)
-5. [Domain agents](#domain-agents)
-6. [Modes of operation](#modes-of-operation)
-7. [Running the test suite](#running-the-test-suite)
-8. [Model sweep tests](#model-sweep-tests)
-9. [Project structure](#project-structure)
+1. [macOS (Apple Silicon) + Ollama Quickstart](#macos-apple-silicon--ollama-quickstart)
+2. [Prerequisites](#prerequisites)
+3. [Installation](#installation)
+4. [Running the app](#running-the-app)
+5. [Supported model backends](#supported-model-backends)
+6. [Domain agents](#domain-agents)
+7. [Modes of operation](#modes-of-operation)
+8. [Running the test suite](#running-the-test-suite)
+9. [Model sweep tests](#model-sweep-tests)
+10. [Project structure](#project-structure)
+
+---
+
+## macOS (Apple Silicon) + Ollama Quickstart
+
+> Recommended setup for **M1 / M2 / M3 / M4** Macs (tested on M4 Max 48 GB).
+
+```bash
+# 1) Install Ollama
+curl -fsSL https://ollama.com/install.sh | sh
+
+# 2) Start the server (auto-starts on macOS; safe to run again)
+ollama serve
+
+# 3) Pull a recommended model
+ollama pull qwen2.5:7b        # fast, great quality/latency balance
+# or
+ollama pull llama3.1:8b       # slightly stronger, slightly slower
+
+# 4) Clone and set up the repo
+git clone https://github.com/skanjila/intuition-scientist.git
+cd intuition-scientist
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+
+# 5) Run — fast preset (lowest latency on Apple Silicon)
+python main.py --provider ollama:qwen2.5:7b --fast \
+  --question "How does attention in transformers relate to adaptive filtering?"
+
+# 6) Keep Ollama warm between runs (avoids reload cost)
+export OLLAMA_KEEP_ALIVE=30m
+ollama ps   # model should appear in the "running" column
+```
+
+**What `--fast` does on Apple Silicon:**
+
+| Setting | `--fast` value | Standard default |
+|---|---|---|
+| `--max-workers` | **1** | 7 |
+| `--max-domains` | **3** | unlimited |
+| MCP internet search | **off** | on |
+| `--agent-max-tokens` | **256** | 1024 |
+| `--synthesis-max-tokens` | **384** | 512 |
+
+Need more quality? Keep `--fast` but allow more agents:
+
+```bash
+python main.py --provider ollama:qwen2.5:7b --fast --max-domains 5
+```
 
 ---
 
@@ -107,6 +160,12 @@ python main.py --provider "openrouter:meta-llama/llama-3.1-8b-instruct:free"
 ```bash
 # Use domain shortcuts (see full list below)
 python main.py --domains physics nn dl
+
+# Signal processing — iterative hard-problem tutor
+python main.py --domains signal --question "Design a Wiener filter for noise cancellation"
+
+# Experiment runner — converts question to a structured experiment plan
+python main.py --domains experiment --question "Does gradient descent converge faster with momentum?"
 
 # Interview prep coaching
 python main.py --domains interview --question "Explain the two-pointer pattern"
@@ -205,6 +264,46 @@ flowchart TD
 
 ```bash
 python main.py --mode interview --question "Solve the Trapping Rain Water problem"
+```
+
+### Physics / Signal Processing iterative tutor mode
+
+Both the `physics` and `signal` / `dsp` agents implement an **iterative
+hard-problem protocol**:
+
+1. The agent asks for your intuitive approach before revealing anything.
+2. It selects the *hardest applicable problem type* from its internal catalog
+   (10 categories ordered from hardest to easiest).
+3. The solution is structured as numbered **checkpoints** — the agent pauses
+   after each one so you can attempt the next step.
+4. Stuck? Ask for a hint; you receive the *minimum* nudge needed to proceed.
+5. After each major result the agent compares it to your initial intuition.
+
+```bash
+# Physics iterative tutor
+python main.py --domains physics --question "Derive the path integral for a harmonic oscillator"
+
+# Signal processing iterative tutor
+python main.py --domains signal --question "Design an optimal Wiener filter for speech enhancement"
+```
+
+### Experiment Runner mode
+
+The `experiment` / `simulate` agent converts any question into a full
+**experiment protocol**:
+
+1. Elicits your intuition and confidence level first.
+2. Enumerates 2-4 falsifiable hypotheses.
+3. For each hypothesis selects an appropriate lightweight experiment type
+   (numeric sweep, Monte Carlo, toy analytic example, etc.).
+4. Produces step-by-step protocols **and** copy-pasteable Python/NumPy
+   snippets you can run locally (no external credentials required).
+5. Compares predicted/observed outcomes to your initial intuition.
+
+```bash
+# Experiment runner
+python main.py --domains experiment \
+  --question "Does gradient descent converge faster with momentum on a quadratic loss?"
 ```
 
 ---
@@ -362,7 +461,7 @@ openrouter:meta-llama/llama-3.1-8b-instruct:free"
 
 ## Domain agents
 
-The system has **22 domain agents** in three groups:
+The system has **24 domain agents** in four groups:
 
 ### Core science & engineering
 
@@ -373,8 +472,9 @@ The system has **22 domain agents** in three groups:
 | Neural Networks | `nn` | Deep theory, signal processing connections, next-gen architectures |
 | Social Science | `social` | Behaviour, psychology, sociology, game theory |
 | Space Science | `space` | Astrophysics + 7 planetary exploration scenarios |
-| Physics | `physics` | Quantum, relativity, condensed matter, statistical mechanics |
+| Physics | `physics` | Quantum, relativity, condensed matter, statistical mechanics — iterative hard-problem tutor |
 | Deep Learning | `dl` | Transformers, SSMs, diffusion, scaling, alignment |
+| Signal Processing | `signal` / `dsp` | Filter design, spectral estimation, adaptive filters — iterative hard-problem tutor |
 
 ### High-economic-value industry
 
@@ -397,13 +497,14 @@ The system has **22 domain agents** in three groups:
 | Organisational Behaviour | `org` | Talent, culture, leadership, workforce planning |
 | Strategy & Intelligence | `strategy` | Competitive moats, M&A, scenario planning |
 
-### Mastery, interview, and research
+### Mastery, interview, research, and experiments
 
 | Domain | Shortcut | Description |
 |---|---|---|
 | Algorithms & Programming | `algo` | Python, Rust, Go; all DS&A patterns |
 | Interview Prep | `interview` / `faang` | 100+ LeetCode patterns + system design + STAR coaching |
 | EE LLM Research | `phd` / `ee_llm` | LLMs, signal processing, LLM safety — PhD-level advisor |
+| Experiment Runner | `experiment` / `simulate` | Converts questions into structured experiment plans with runnable Python snippets and human-intuition comparison |
 
 ---
 
@@ -447,7 +548,7 @@ pip install pytest-cov
 python -m pytest tests/ --cov=src --cov-report=term-missing
 ```
 
-Expected output: **205 passed, 35 skipped** (sweep tests skip in CI).
+Expected output: **338 passed, 37 skipped** (sweep tests skip in CI).
 
 ---
 
@@ -497,6 +598,7 @@ intuition-scientist/
 │   │   ├── ee_llm_research_agent.py # PhD: LLMs + signal processing + safety
 │   │   ├── electrical_engineering_agent.py
 │   │   ├── enterprise_architecture_agent.py
+│   │   ├── experiment_runner_agent.py  # NEW: experiment plans + runnable snippets
 │   │   ├── finance_economics_agent.py
 │   │   ├── healthcare_agent.py
 │   │   ├── interview_prep_agent.py  # 100+ DS&A practice problems + system design
@@ -504,7 +606,8 @@ intuition-scientist/
 │   │   ├── marketing_growth_agent.py
 │   │   ├── neural_networks_agent.py # Deep theory + signal processing + next-gen
 │   │   ├── organizational_behavior_agent.py
-│   │   ├── physics_agent.py
+│   │   ├── physics_agent.py         # Iterative hard-problem tutor (10 problem types)
+│   │   ├── signal_processing_agent.py  # NEW: iterative hard-problem tutor (10 types)
 │   │   ├── social_science_agent.py
 │   │   ├── space_science_agent.py   # + 7 planetary exploration scenarios
 │   │   ├── strategy_intelligence_agent.py
@@ -533,10 +636,11 @@ intuition-scientist/
     ├── fixtures/
     │   └── qa.yaml                  # Complex Q&A with human intuition prefills
     ├── test_agents.py
-    ├── test_large_suite.py          # 200+ tests across all 22 domains
+    ├── test_large_suite.py          # 200+ tests across all domains
     ├── test_llm_registry.py
     ├── test_model_sweep.py          # Opt-in: RUN_MODEL_SWEEP=1
     ├── test_models.py
+    ├── test_new_agents.py           # NEW: tests for signal processing + experiment runner
     ├── test_orchestrator.py
     └── test_weighing.py
 ```
