@@ -121,6 +121,62 @@ No API keys are required to run in **mock mode** (the default).
 
 ## Running the app
 
+### Interactive session walk-through
+
+The default mode is fully interactive. Here is what a typical session looks like step by step:
+
+```
+$ python main.py
+
+======================================================================
+🧪  Welcome to the Human Intuition Scientist
+======================================================================
+
+Enter your question: How does attention work in transformers?
+```
+
+After you type your question and press **Enter**, the CLI prompts for your intuitive answer:
+
+```
+======================================================================
+🧠  HUMAN INTUITION CAPTURE
+======================================================================
+
+Question:
+  How does attention work in transformers?
+
+Your intuitive answer (press Enter twice when done):
+> It computes weighted sums of values based on query-key similarity.
+>                          ← blank line to finish
+Confidence (0.0–1.0, default 0.5): 0.7
+Reasoning (optional, press Enter to skip): Each token attends to all others via dot-product scores.
+```
+
+> **Tip — finishing the intuition prompt**: type your answer, then press
+> **Enter** once (to go to the next line) and **Enter again on a blank line**
+> to submit. This is the only interactive step; everything else runs automatically.
+
+Once your intuition is captured, the system queries domain agents in parallel and prints a full `WeighingResult`:
+
+```
+⏳  Querying domain experts…
+
+══════════════════════════ Human Intuition ══════
+  Answer     : It computes weighted sums of values…
+  Confidence : 70%
+
+══════════════════ Domain-by-Domain Alignment ═══
+  Neural Networks     similarity=0.85  agent_conf=90%
+  Deep Learning       similarity=0.82  agent_conf=88%
+  …
+
+══════════════════════ Synthesized Answer ════════
+  …
+
+══════════════════════════ Intuition Accuracy ════
+  78.3%  (weighted alignment across all domain experts)
+```
+
 ### Fully interactive (mock backend — no model required)
 
 ```bash
@@ -133,6 +189,16 @@ You will be prompted for a question and your intuition. The system runs all rele
 
 ```bash
 python main.py --question "How does attention in transformers relate to adaptive filtering?"
+```
+
+You are still prompted for your intuition (confidence, reasoning). Add
+`--auto-intuition` to skip that prompt entirely (see below).
+
+### Skip the interactive prompt entirely
+
+```bash
+# No stdin required — great for CI, scripting, or quick checks
+python main.py --question "How does attention work?" --auto-intuition --no-mcp
 ```
 
 ### Use a specific free model backend
@@ -444,11 +510,35 @@ python main.py --question "How does quantum computing differ from classical?" \
 
 ### New CLI flags summary
 
-| Flag | Type | Description |
-|---|---|---|
-| `--auto-intuition` | flag | Skip interactive prompt; auto-generate human perspective |
-| `--adaptive-agents` | flag | Enable evolving agent-selection loop |
-| `--target-latency-ms MS` | integer | Wall-clock budget for adaptive loop (ms) |
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--auto-intuition` | flag | off | Skip interactive prompt; auto-generate human perspective |
+| `--adaptive-agents` | flag | off | Enable evolving agent-selection loop |
+| `--target-latency-ms MS` | integer | — | Wall-clock budget for adaptive loop (ms) |
+| `--agent-timeout-seconds SECS` | float | `30.0` | Max seconds to wait per agent before returning a low-confidence placeholder; prevents indefinite hangs |
+
+#### Recommended non-interactive usage (CI / scripting)
+
+Use `--auto-intuition --no-mcp` together with `--agent-timeout-seconds` to get
+a fully non-blocking, scriptable run:
+
+```bash
+# Fast CI check — no stdin, no network, 10 s per-agent ceiling
+python main.py \
+  --question "Does L2 regularization reduce overfitting?" \
+  --auto-intuition \
+  --no-mcp \
+  --agent-timeout-seconds 10 \
+  --max-domains 3
+
+# With a real local model backend
+python main.py \
+  --provider ollama:qwen2.5:7b \
+  --question "Explain gradient descent" \
+  --auto-intuition \
+  --no-mcp \
+  --agent-timeout-seconds 30
+```
 
 ---
 
@@ -677,22 +767,71 @@ python main.py --mode interview --question "How do you find the kth largest elem
 
 ## Running the test suite
 
+All tests run fully **offline** — no LLM, no network, no API keys required.
+The mock backend is used automatically.
+
+### Prerequisites
+
 ```bash
-# Run all tests (offline, no model required)
-python -m pytest tests/ -v
+# pytest is the only test dependency (already in requirements.txt)
+pip install -r requirements.txt
 
-# Run a specific test file
-python -m pytest tests/test_large_suite.py -v
-
-# Run only the dual-pipeline weight tests
-python -m pytest tests/test_large_suite.py::TestDualPipelineWeights -v
-
-# Run with coverage
+# Optional: coverage reporting
 pip install pytest-cov
+```
+
+### Run the full suite
+
+```bash
+python -m pytest tests/ -v
+```
+
+Expected output: **436 passed, 37 skipped** (sweep tests are skipped by default in CI).
+
+### Common filtering options
+
+```bash
+# Run a single test file
+python -m pytest tests/test_orchestrator.py -v
+
+# Run a single test class
+python -m pytest tests/test_orchestrator.py::TestOrchestatorRunOffline -v
+
+# Run a single test by name (substring match)
+python -m pytest tests/ -k "timeout" -v
+
+# Stop on first failure
+python -m pytest tests/ -x -v
+
+# Parallel execution (install pytest-xdist first)
+pip install pytest-xdist
+python -m pytest tests/ -n auto -v
+```
+
+### Run with coverage
+
+```bash
 python -m pytest tests/ --cov=src --cov-report=term-missing
 ```
 
-Expected output: **436 passed, 37 skipped** (sweep tests skip in CI).
+### Run only a specific test file group
+
+```bash
+# Core orchestrator tests
+python -m pytest tests/test_orchestrator.py -v
+
+# Agent feature tests
+python -m pytest tests/test_agents.py tests/test_new_agents.py -v
+
+# Workflow rendering
+python -m pytest tests/test_workflow.py -v
+
+# Auto-intuition and adaptive loop
+python -m pytest tests/test_auto_intuition_adaptive.py -v
+
+# Full large suite (all domains × modes)
+python -m pytest tests/test_large_suite.py -v
+```
 
 ---
 
