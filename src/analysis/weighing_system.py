@@ -146,12 +146,14 @@ class WeighingSystem:
     def __init__(
         self,
         backend: Optional[LLMBackend] = None,
+        synthesis_max_tokens: int = 512,
         # Legacy kwargs — accepted but ignored
         llm_client: Optional[object] = None,
         llm_provider: str = "mock",
         model: Optional[str] = None,
     ) -> None:
         self._backend: LLMBackend = backend if backend is not None else MockBackend()
+        self._synthesis_max_tokens = synthesis_max_tokens
         # _use_llm is True only when a real (non-mock) backend was provided
         self._use_llm = backend is not None and not isinstance(backend, MockBackend)
 
@@ -348,7 +350,7 @@ class WeighingSystem:
             "3. Corrects or expands where the intuition fell short.\n"
             "Keep the answer under 400 words."
         )
-        return self._call_llm(prompt, max_tokens=512) or "Synthesis unavailable."
+        return self._call_llm(prompt, max_tokens=self._synthesis_max_tokens) or "Synthesis unavailable."
 
     def _generate_analysis(
         self,
@@ -414,7 +416,7 @@ class WeighingSystem:
             "3. Notes which domains were most and least relevant.\n"
             "4. Assesses the quality of the intuition as a thinking strategy."
         )
-        return self._call_llm(prompt, max_tokens=400) or "Analysis unavailable."
+        return self._call_llm(prompt, max_tokens=self._synthesis_max_tokens) or "Analysis unavailable."
 
     def _generate_recommendations(
         self,

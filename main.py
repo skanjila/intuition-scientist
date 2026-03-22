@@ -9,6 +9,8 @@ Usage
     python main.py --provider groq:llama-3.1-8b-instant  # use Groq free-tier
     python main.py --no-mcp                      # disable internet search
     python main.py --domains physics cs          # restrict to specific domains
+    python main.py --fast                        # lowest-latency preset (Ollama/Apple Silicon)
+    python main.py --max-workers 2               # custom thread-pool size
 
 Supported free/open backends:  mock, ollama, llamacpp, groq, together,
                                 cloudflare, openrouter.
@@ -242,6 +244,15 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Disable internet search via MCP.",
     )
     parser.add_argument(
+        "--use-mcp",
+        action="store_true",
+        default=False,
+        help=(
+            "Explicitly enable MCP internet search. "
+            "Use this to override the --fast preset which disables MCP by default."
+        ),
+    )
+    parser.add_argument(
         "--domains",
         nargs="+",
         default=None,
@@ -258,6 +269,48 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="N",
         help="Maximum number of domain agents to query.",
+    )
+    parser.add_argument(
+        "--max-workers",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "Orchestrator thread-pool size for parallel agent calls "
+            "(default: 7, or 1 when --fast is set). "
+            "For local Ollama on Apple Silicon, 1–2 typically gives lowest latency."
+        ),
+    )
+    parser.add_argument(
+        "--fast",
+        action="store_true",
+        default=False,
+        help=(
+            "Enable low-latency preset optimized for local Ollama on Apple Silicon. "
+            "Sets: --max-workers 1, --max-domains 3, --no-mcp, "
+            "--agent-max-tokens 256, --synthesis-max-tokens 384. "
+            "Any of these can be overridden by supplying the flag explicitly."
+        ),
+    )
+    parser.add_argument(
+        "--agent-max-tokens",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "Token budget for each per-agent LLM call "
+            "(default: 1024, or 256 when --fast is set)."
+        ),
+    )
+    parser.add_argument(
+        "--synthesis-max-tokens",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "Token budget for synthesis and deep-analysis LLM calls "
+            "(default: 512, or 384 when --fast is set)."
+        ),
     )
     return parser
 
@@ -289,6 +342,33 @@ def main(argv: Optional[list[str]] = None) -> None:
         )
         sys.exit(1)
 
+    # ------------------------------------------------------------------
+    # Apply --fast preset (each value can be overridden by explicit flag)
+    # ------------------------------------------------------------------
+    if args.fast:
+        max_workers: int = args.max_workers if args.max_workers is not None else 1
+        max_domains: Optional[int] = (
+            args.max_domains if args.max_domains is not None else 3
+        )
+        agent_max_tokens: int = (
+            args.agent_max_tokens if args.agent_max_tokens is not None else 256
+        )
+        synthesis_max_tokens: int = (
+            args.synthesis_max_tokens if args.synthesis_max_tokens is not None else 384
+        )
+        # MCP: disabled by fast preset unless --use-mcp is explicitly given
+        use_mcp: bool = args.use_mcp and not args.no_mcp
+    else:
+        max_workers = args.max_workers if args.max_workers is not None else 7
+        max_domains = args.max_domains
+        agent_max_tokens = (
+            args.agent_max_tokens if args.agent_max_tokens is not None else 1024
+        )
+        synthesis_max_tokens = (
+            args.synthesis_max_tokens if args.synthesis_max_tokens is not None else 512
+        )
+        use_mcp = not args.no_mcp
+
     # Parse domain overrides
     domains = None
     if args.domains:
@@ -318,8 +398,11 @@ def main(argv: Optional[list[str]] = None) -> None:
 
     with AgentOrchestrator(
         backend_spec=backend_spec,
-        use_mcp=not args.no_mcp,
-        max_domains=args.max_domains,
+        use_mcp=use_mcp,
+        max_workers=max_workers,
+        max_domains=max_domains,
+        agent_max_tokens=agent_max_tokens,
+        synthesis_max_tokens=synthesis_max_tokens,
     ) as orchestrator:
         _print("\n⏳  Querying domain experts…\n" if not HAS_RICH
                else "\n[bold yellow]⏳  Querying domain experts…[/bold yellow]\n")

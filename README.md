@@ -124,17 +124,85 @@ python main.py --domains faang --question "Design a rate limiter"
 python main.py --no-mcp
 ```
 
-### Debate mode (human vs. tool evidence vs. agents)
-
-```bash
-python main.py --mode debate --question "Should enterprises adopt microservices by default?"
-```
-
 ### Interview prep mode (three agents: technical + algorithmic + psychological)
 
 ```bash
 python main.py --mode interview --question "Solve the Trapping Rain Water problem"
 ```
+
+---
+
+## Low latency on Mac (Ollama)
+
+If you are running **Ollama on Apple Silicon** (M1/M2/M3/M4), use the `--fast`
+preset to get the shortest time-to-answer with reasonable quality.
+
+### Why answers can feel slow by default
+
+The orchestrator normally runs up to 7 agent LLM calls **plus** synthesis and
+analysis calls (each up to 1,024 tokens).  On a single local GPU, many
+concurrent generations compete for the same compute, which often *increases*
+end-to-end latency compared with running them one at a time.
+
+### Recommended command (`--fast` preset)
+
+```bash
+python main.py --provider ollama:qwen2.5:7b --fast \
+  --question "How does attention in transformers relate to adaptive filtering?"
+```
+
+`--fast` applies these defaults (each can be overridden individually):
+
+| Setting | Fast preset | Standard default |
+|---|---|---|
+| `--max-workers` | **1** | 7 |
+| `--max-domains` | **3** | unlimited |
+| MCP internet search | **off** | on |
+| `--agent-max-tokens` | **256** | 1024 |
+| `--synthesis-max-tokens` | **384** | 512 |
+
+### Override individual settings
+
+```bash
+# Fast preset but re-enable MCP web search
+python main.py --provider ollama:qwen2.5:7b --fast --use-mcp
+
+# Fast preset with more agents (higher quality, slower)
+python main.py --provider ollama:qwen2.5:7b --fast --max-domains 5
+
+# Explicit workers and token caps without the full preset
+python main.py --provider ollama:qwen2.5:7b --max-workers 2 \
+  --agent-max-tokens 512 --synthesis-max-tokens 512 --no-mcp
+```
+
+### Quick performance diagnostic
+
+Run the same question twice to confirm the bottleneck:
+
+```bash
+# Fast settings (~3× speedup on a typical M4 Max)
+time python main.py --provider ollama:qwen2.5:7b --fast \
+  --question "Explain gradient descent"
+
+# Standard defaults
+time python main.py --provider ollama:qwen2.5:7b \
+  --question "Explain gradient descent"
+```
+
+If `--fast` is dramatically quicker, the bottleneck is **too many agents /
+too much concurrency / too many tokens** rather than raw GPU throughput.
+
+### Keeping Ollama warm
+
+Make sure your model stays loaded between questions to avoid repeated warm-up
+costs.  In a separate terminal:
+
+```bash
+ollama ps   # should show your model in the "running" column
+```
+
+If the model is not listed, it will be reloaded on every question — add
+`OLLAMA_KEEP_ALIVE=30m` to your environment to keep it resident.
 
 ---
 
