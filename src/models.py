@@ -117,6 +117,134 @@ class SearchResult:
 
 
 # ---------------------------------------------------------------------------
+# Experiment runner models
+# ---------------------------------------------------------------------------
+
+
+class ExperimentCategory(str, Enum):
+    """Taxonomy of lightweight experiment types the ExperimentRunnerAgent uses.
+
+    Each value corresponds to one of the canonical experiment types defined in
+    ``ExperimentRunnerAgent.EXPERIMENT_TYPES``.  ``NOT_APPLICABLE`` is used
+    when a question is classified as non-experimentable.
+    """
+
+    NUMERIC_SWEEP = "numeric_sweep"
+    MONTE_CARLO = "monte_carlo"
+    TOY_ANALYTICAL = "toy_analytical"
+    DIMENSIONAL_SCALING = "dimensional_scaling"
+    FINITE_DIFFERENCE = "finite_difference"
+    COMBINATORIAL = "combinatorial"
+    PERTURBATION = "perturbation"
+    FERMI_ESTIMATE = "fermi_estimate"
+    NOT_APPLICABLE = "not_applicable"
+
+
+@dataclass
+class QuestionExperimentability:
+    """Classification of whether a question warrants experimental investigation.
+
+    Produced by :meth:`ExperimentRunnerAgent.classify_question` using
+    deterministic rule-based scoring (no LLM required).
+
+    Attributes
+    ----------
+    question:
+        The original question that was classified.
+    is_experimentable:
+        ``True`` when the question can be meaningfully answered (at least in
+        part) through lightweight computational experiments.
+    score:
+        Raw classification score in ``[-1.0, +1.0]``.  Positive values
+        indicate evidence for experimentability; negative values indicate the
+        question is better served by direct analysis.
+    question_type:
+        Human-readable label for the dominant question category, e.g.
+        ``"quantitative-causal"``, ``"probabilistic"``, ``"definitional"``.
+    suggested_categories:
+        Ordered list of the most appropriate ``ExperimentCategory`` values for
+        this question (most relevant first).
+    reason:
+        Short plain-English explanation of why the question was classified
+        as experimentable or not.
+    """
+
+    question: str
+    is_experimentable: bool
+    score: float
+    question_type: str
+    suggested_categories: list[ExperimentCategory]
+    reason: str
+
+
+@dataclass
+class ExperimentSpec:
+    """Specification for one targeted experiment within an experiment plan.
+
+    Each ``ExperimentSpec`` is self-contained: a reader can reproduce the
+    experiment using only the fields here without any external dependencies.
+
+    Attributes
+    ----------
+    id:
+        Short identifier, e.g. ``"exp_1"`` or ``"monte_carlo_baseline"``.
+    category:
+        The experiment type drawn from ``ExperimentCategory``.
+    hypothesis:
+        One falsifiable claim this experiment tests (plain English).
+    variables:
+        Mapping with keys ``"independent"``, ``"dependent"``, and
+        ``"controlled"`` describing the experimental variables.
+    procedure:
+        Ordered list of plain-English steps to run the experiment.
+    python_snippet:
+        Self-contained, runnable Python/NumPy code implementing the
+        experiment.  Must use only the standard library + NumPy/SciPy.
+        Must be deterministic (random seeds fixed).  Max ~40 lines.
+    expected_outcome:
+        Quantitative prediction of what the snippet will show.
+    disconfirmation:
+        What result would *refute* the hypothesis.
+    """
+
+    id: str
+    category: ExperimentCategory
+    hypothesis: str
+    variables: dict[str, str]
+    procedure: list[str]
+    python_snippet: str
+    expected_outcome: str
+    disconfirmation: str
+
+
+@dataclass
+class ExperimentPlan:
+    """A structured set of experiments designed to answer a question.
+
+    Produced by :meth:`ExperimentRunnerAgent.plan_experiments`.
+
+    Attributes
+    ----------
+    question:
+        The original question the plan addresses.
+    experimentability:
+        Classification metadata explaining *why* experiments were or were not
+        proposed.
+    experiments:
+        Ordered list of :class:`ExperimentSpec` objects.  Empty when
+        ``experimentability.is_experimentable`` is ``False``.
+    synthesis_strategy:
+        Plain-English description of how to interpret and combine results
+        across all experiments to reach an overall conclusion.
+    """
+
+    question: str
+    experimentability: QuestionExperimentability
+    experiments: list[ExperimentSpec]
+    synthesis_strategy: str
+
+
+# ---------------------------------------------------------------------------
 # Debate harness models
 # ---------------------------------------------------------------------------
 

@@ -52,7 +52,7 @@ from src.agents.signal_processing_agent import SignalProcessingAgent
 from src.agents.experiment_runner_agent import ExperimentRunnerAgent
 from src.analysis.debate_engine import DebateEngine
 from src.analysis.weighing_system import WeighingSystem
-from src.intuition.human_intuition import IntuitionCapture
+from src.intuition.human_intuition import IntuitionCapture, generate_auto_intuition
 from src.llm.base import LLMBackend
 from src.llm.registry import get_backend
 from src.mcp.mcp_client import MCPClient
@@ -129,6 +129,21 @@ class AgentOrchestrator:
     synthesis_max_tokens:
         Token budget for synthesis and full-analysis LLM calls
         (default: 512).  Lower values (e.g. 384) reduce latency.
+    auto_intuition:
+        When ``True``, skip interactive prompting and auto-generate a
+        lightweight "human intuition" response using keyword heuristics and
+        an optional short LLM call.  The default (``False``) preserves the
+        original interactive behaviour.
+    adaptive_agents:
+        When ``True``, use an evolving adaptive loop that starts with a small
+        set of domain agents and expands only if confidence or coverage is
+        deemed insufficient.  The default (``False``) queries a fixed set of
+        inferred domains.  See :meth:`_adaptive_select_and_run` for details.
+    target_latency_ms:
+        Optional wall-clock budget (milliseconds) for the adaptive loop.
+        When the budget is exceeded the loop stops expanding even if the
+        confidence threshold has not been reached.  Ignored when
+        ``adaptive_agents`` is ``False``.
 
     .. deprecated::
         ``llm_provider`` and ``model`` keyword arguments are accepted but
@@ -144,6 +159,9 @@ class AgentOrchestrator:
         max_domains: Optional[int] = None,
         agent_max_tokens: int = 1024,
         synthesis_max_tokens: int = 512,
+        auto_intuition: bool = False,
+        adaptive_agents: bool = False,
+        target_latency_ms: Optional[int] = None,
         # Legacy kwargs — accepted but ignored
         llm_provider: str = "mock",
         model: Optional[str] = None,
@@ -157,6 +175,9 @@ class AgentOrchestrator:
         self.max_workers = max_workers
         self.max_domains = max_domains
         self._agent_max_tokens = agent_max_tokens
+        self.auto_intuition = auto_intuition
+        self.adaptive_agents = adaptive_agents
+        self.target_latency_ms = target_latency_ms
 
         self._mcp_client = MCPClient() if use_mcp else None
         self._weighing_system = WeighingSystem(
@@ -164,7 +185,8 @@ class AgentOrchestrator:
             synthesis_max_tokens=synthesis_max_tokens,
         )
         self._debate_engine = DebateEngine(backend=self._backend)
-        self._intuition_capture = IntuitionCapture(interactive=True)
+        # Interactive capture is only used when auto_intuition is False
+        self._intuition_capture = IntuitionCapture(interactive=not auto_intuition)
 
     # ------------------------------------------------------------------
     # Primary entry point — weigh human intuition against agents
@@ -184,17 +206,38 @@ class AgentOrchestrator:
         question:
             The question to investigate.
         prefilled_intuition:
-            If provided, skip the interactive intuition-capture step.
+            If provided, skip the interactive (or auto-generated) intuition
+            step entirely and use this value directly.
         domains:
             Explicit list of domains to query.  When ``None`` the orchestrator
-            infers the most relevant domains from the question text.
+            infers the most relevant domains from the question text.  Note:
+            when ``adaptive_agents=True`` and *domains* is ``None``, the
+            adaptive loop takes over domain selection and expansion; an
+            explicit *domains* list disables the adaptive loop.
         """
-        intuition = self._intuition_capture.capture(
-            question, prefilled=prefilled_intuition
-        )
-        selected_domains = domains or self._select_domains(question, intuition)
-        agents = self._build_agents(selected_domains)
-        responses = self._query_agents(agents, question)
+        # ------------------------------------------------------------------
+        # Step 1 — Capture or generate human intuition
+        # ------------------------------------------------------------------
+        if prefilled_intuition is not None:
+            intuition = prefilled_intuition
+        elif self.auto_intuition:
+            # Non-interactive: synthesise a lightweight "human" perspective
+            # using keyword heuristics + optional short LLM quick-think pass.
+            intuition = generate_auto_intuition(question, backend=self._backend)
+        else:
+            intuition = self._intuition_capture.capture(question)
+
+        # ------------------------------------------------------------------
+        # Step 2 — Select domains and query agents
+        # ------------------------------------------------------------------
+        if self.adaptive_agents and domains is None:
+            # Use the evolving adaptive loop: start small, expand if needed.
+            responses = self._adaptive_select_and_run(question, intuition)
+        else:
+            selected_domains = domains or self._select_domains(question, intuition)
+            agents = self._build_agents(selected_domains)
+            responses = self._query_agents(agents, question)
+
         return self._weighing_system.weigh(intuition, responses)
 
     # ------------------------------------------------------------------
@@ -228,9 +271,7 @@ class AgentOrchestrator:
         domains:
             Explicit domain list; auto-detected when ``None``.
         """
-        intuition = self._intuition_capture.capture(
-            question, prefilled=prefilled_intuition
-        )
+        intuition = self._resolve_intuition(question, prefilled_intuition)
         selected_domains = domains or self._select_domains(question, intuition)
         agents = self._build_agents(selected_domains)
         responses = self._query_agents(agents, question)
@@ -270,9 +311,7 @@ class AgentOrchestrator:
         answer against the combined expert consensus, then packages the
         results into a structured :class:`InterviewResult`.
         """
-        intuition = self._intuition_capture.capture(
-            question, prefilled=prefilled_intuition
-        )
+        intuition = self._resolve_intuition(question, prefilled_intuition)
 
         # Always use the three interview-coaching domains
         coaching_domains = [
@@ -353,11 +392,10 @@ class AgentOrchestrator:
         """
         import time
 
-        # Capture intuition once (interactively if needed) so all model runs
-        # see the same human input and results are comparable.
-        intuition = self._intuition_capture.capture(
-            question, prefilled=prefilled_intuition
-        )
+        # Capture intuition once (interactively or via auto-generation if
+        # auto_intuition=True) so all model runs see the same human input
+        # and results are comparable.
+        intuition = self._resolve_intuition(question, prefilled_intuition)
         selected_domains = domains or self._select_domains(question, intuition)
 
         run_results: list[ModelRunResult] = []
@@ -486,6 +524,203 @@ class AgentOrchestrator:
             reverse=True,
         )
         return scored[0]
+
+    # ------------------------------------------------------------------
+    # Intuition resolution helper
+    # ------------------------------------------------------------------
+
+    def _resolve_intuition(
+        self,
+        question: str,
+        prefilled: Optional[HumanIntuition],
+    ) -> HumanIntuition:
+        """Return the intuition to use for *question*.
+
+        Priority order
+        --------------
+        1. *prefilled* — caller-supplied value; used as-is.
+        2. ``auto_intuition=True`` — generate a lightweight auto-intuition.
+        3. Default interactive capture via ``_intuition_capture``.
+        """
+        if prefilled is not None:
+            return prefilled
+        if self.auto_intuition:
+            return generate_auto_intuition(question, backend=self._backend)
+        return self._intuition_capture.capture(question)
+
+    # ------------------------------------------------------------------
+    # Adaptive agent selection loop
+    # ------------------------------------------------------------------
+
+    def _adaptive_select_and_run(
+        self,
+        question: str,
+        intuition: HumanIntuition,
+    ) -> list["AgentResponse"]:
+        """Evolving adaptive loop for intelligent agent-count selection.
+
+        Strategy
+        --------
+        The loop addresses a fundamental trade-off: querying all available
+        domain agents is thorough but slow; querying too few may miss critical
+        perspectives.  The adaptive loop resolves this by starting small and
+        expanding *only when necessary*.
+
+        Algorithm
+        ~~~~~~~~~
+        1. **Rank candidates**: Score all domains by keyword relevance to the
+           question + intuition text.  Ensure a minimum of
+           ``_ADAPTIVE_INITIAL`` (3) candidates.
+        2. **Initial batch**: Query the top ``_ADAPTIVE_INITIAL`` agents in
+           parallel (same thread-pool as the non-adaptive path).
+        3. **Evaluate coverage**: Compute the mean confidence across all
+           collected responses.  High mean confidence (≥ ``_ADAPTIVE_CONF_THRESHOLD``
+           = 0.65) signals that the current set of agents reached a coherent
+           answer and no further expansion is needed.
+        4. **Expand if needed**: If coverage is insufficient *and* stopping
+           criteria are not met, append the next ``_ADAPTIVE_STEP`` (2)
+           highest-ranked candidate domains and query *only those new agents*
+           (already-queried agents are never re-queried — purely incremental).
+        5. **Stopping criteria** (any one is sufficient to halt expansion):
+           - Mean agent confidence ≥ ``_ADAPTIVE_CONF_THRESHOLD``.
+           - No remaining candidate domains.
+           - ``max_domains`` ceiling reached.
+           - Wall-clock budget exceeded (``target_latency_ms`` set and elapsed
+             time ≥ that value).
+
+        Why this is safe and predictable
+        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        - The candidate list is computed once, deterministically, from keyword
+          matching — the same heuristic used in the non-adaptive path.
+        - The loop terminates in at most ``ceil(N / _ADAPTIVE_STEP)`` rounds
+          where N is the number of candidate domains (bounded by ``max_domains``
+          when set, or the total number of registered domains otherwise).
+        - Every expansion step is logged at INFO level so behaviour is fully
+          observable without stepping through source code.
+        - The incremental design means a partial result (from the initial batch)
+          is always available even if the loop is interrupted by a time budget.
+
+        Parameters
+        ----------
+        question:
+            The question under investigation.
+        intuition:
+            The (possibly auto-generated) human intuition for the question.
+        """
+        import logging
+        import time
+
+        logger = logging.getLogger(__name__)
+
+        # --- Tuning constants (documented here for auditability) ---
+        # Confidence threshold: mean agent confidence at or above this value
+        # indicates the current agent set reached a sufficiently coherent answer.
+        _ADAPTIVE_CONF_THRESHOLD: float = 0.65
+        # Number of new domains to add per expansion round.
+        _ADAPTIVE_STEP: int = 2
+        # Minimum number of domains in the initial batch.
+        _ADAPTIVE_INITIAL: int = 3
+
+        # Build the full ranked candidate list from keyword relevance.
+        # IntuitionCapture.infer_domains() is a pure static keyword-scoring
+        # utility that happens to live on IntuitionCapture for historical
+        # reasons; it has no dependency on interactive user I/O.
+        combined = f"{question} {intuition.intuitive_answer} {intuition.reasoning}"
+        all_candidates: list[Domain] = IntuitionCapture.infer_domains(combined)
+
+        # Guarantee at least _ADAPTIVE_INITIAL candidates
+        if len(all_candidates) < _ADAPTIVE_INITIAL:
+            for d in Domain:
+                if d not in all_candidates:
+                    all_candidates.append(d)
+                if len(all_candidates) >= _ADAPTIVE_INITIAL:
+                    break
+
+        # Apply max_domains ceiling to prevent runaway expansion
+        if self.max_domains:
+            all_candidates = all_candidates[: self.max_domains]
+
+        # Partition into active initial set and remaining candidates
+        active_domains: list[Domain] = all_candidates[:_ADAPTIVE_INITIAL]
+        remaining_candidates: list[Domain] = list(all_candidates[_ADAPTIVE_INITIAL:])
+
+        all_responses: list["AgentResponse"] = []
+        queried_domains: set[Domain] = set()
+        start_time = time.monotonic()
+        round_num = 0
+
+        while True:
+            round_num += 1
+            new_domains = [d for d in active_domains if d not in queried_domains]
+
+            if new_domains:
+                logger.info(
+                    "[adaptive] Round %d: querying %d new agent(s): %s",
+                    round_num,
+                    len(new_domains),
+                    [d.value for d in new_domains],
+                )
+                new_agents = self._build_agents(new_domains)
+                new_responses = self._query_agents(new_agents, question)
+                all_responses.extend(new_responses)
+                queried_domains.update(new_domains)
+
+            # Compute mean confidence across all collected responses
+            mean_conf = (
+                sum(r.confidence for r in all_responses) / len(all_responses)
+                if all_responses
+                else 0.0
+            )
+
+            elapsed_ms = (time.monotonic() - start_time) * 1000
+            time_budget_exceeded = (
+                self.target_latency_ms is not None
+                and elapsed_ms >= self.target_latency_ms
+            )
+
+            logger.info(
+                "[adaptive] Round %d complete: %d domains queried, "
+                "mean_conf=%.2f, elapsed=%.0f ms",
+                round_num,
+                len(queried_domains),
+                mean_conf,
+                elapsed_ms,
+            )
+
+            # --- Stopping criteria ---
+            if mean_conf >= _ADAPTIVE_CONF_THRESHOLD:
+                logger.info(
+                    "[adaptive] Stopping: mean confidence %.2f >= threshold %.2f",
+                    mean_conf,
+                    _ADAPTIVE_CONF_THRESHOLD,
+                )
+                break
+
+            if not remaining_candidates:
+                logger.info("[adaptive] Stopping: no remaining candidate domains.")
+                break
+
+            if time_budget_exceeded:
+                logger.info(
+                    "[adaptive] Stopping: time budget %d ms exceeded (elapsed %.0f ms).",
+                    self.target_latency_ms,
+                    elapsed_ms,
+                )
+                break
+
+            # --- Expand: add next batch of domains ---
+            next_batch = remaining_candidates[:_ADAPTIVE_STEP]
+            remaining_candidates = remaining_candidates[_ADAPTIVE_STEP:]
+            active_domains = active_domains + next_batch
+            logger.info(
+                "[adaptive] Expanding: adding domains %s "
+                "(mean_conf=%.2f < threshold=%.2f)",
+                [d.value for d in next_batch],
+                mean_conf,
+                _ADAPTIVE_CONF_THRESHOLD,
+            )
+
+        return all_responses
 
     # ------------------------------------------------------------------
     # Domain selection
