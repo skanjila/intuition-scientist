@@ -7,11 +7,18 @@ The orchestrator:
 4. Collects their responses in parallel (using threads).
 5. Passes everything to the ``WeighingSystem`` for deep analysis.
 6. Returns a ``WeighingResult`` to the caller.
+
+Additional entry points
+-----------------------
+``debate()``
+    Runs the full structured multi-party debate (human + tool + agents).
+``interview_prep()``
+    Runs an interview coaching session using InterviewPrepAgent,
+    AlgorithmsProgrammingAgent, and SocialScienceAgent together.
 """
 
 from __future__ import annotations
 
-import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional
 
@@ -23,10 +30,39 @@ from src.agents.neural_networks_agent import NeuralNetworksAgent
 from src.agents.physics_agent import PhysicsAgent
 from src.agents.social_science_agent import SocialScienceAgent
 from src.agents.space_science_agent import SpaceScienceAgent
+# High-economic-value industry agents
+from src.agents.healthcare_agent import HealthcareAgent
+from src.agents.climate_energy_agent import ClimateEnergyAgent
+from src.agents.finance_economics_agent import FinanceEconomicsAgent
+from src.agents.cybersecurity_agent import CybersecurityAgent
+from src.agents.biotech_genomics_agent import BiotechGenomicsAgent
+from src.agents.supply_chain_agent import SupplyChainAgent
+# Enterprise problem agents
+from src.agents.legal_compliance_agent import LegalComplianceAgent
+from src.agents.enterprise_architecture_agent import EnterpriseArchitectureAgent
+from src.agents.marketing_growth_agent import MarketingGrowthAgent
+from src.agents.organizational_behavior_agent import OrganizationalBehaviorAgent
+from src.agents.strategy_intelligence_agent import StrategyIntelligenceAgent
+# Mastery / interview / PhD research agents
+from src.agents.algorithms_programming_agent import AlgorithmsProgrammingAgent
+from src.agents.interview_prep_agent import InterviewPrepAgent
+from src.agents.ee_llm_research_agent import EELLMResearchAgent
+from src.analysis.debate_engine import DebateEngine
 from src.analysis.weighing_system import WeighingSystem
 from src.intuition.human_intuition import IntuitionCapture
+from src.llm.base import LLMBackend
+from src.llm.registry import get_backend
 from src.mcp.mcp_client import MCPClient
-from src.models import AgentResponse, Domain, HumanIntuition, WeighingResult
+from src.models import (
+    AgentResponse,
+    DebateResult,
+    Domain,
+    HumanIntuition,
+    InterviewResult,
+    ModelEvaluationResult,
+    ModelRunResult,
+    WeighingResult,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -34,6 +70,7 @@ from src.models import AgentResponse, Domain, HumanIntuition, WeighingResult
 # ---------------------------------------------------------------------------
 
 _AGENT_CLASSES: dict[Domain, type[BaseAgent]] = {
+    # Core science / engineering
     Domain.ELECTRICAL_ENGINEERING: ElectricalEngineeringAgent,
     Domain.COMPUTER_SCIENCE: ComputerScienceAgent,
     Domain.NEURAL_NETWORKS: NeuralNetworksAgent,
@@ -41,6 +78,23 @@ _AGENT_CLASSES: dict[Domain, type[BaseAgent]] = {
     Domain.SPACE_SCIENCE: SpaceScienceAgent,
     Domain.PHYSICS: PhysicsAgent,
     Domain.DEEP_LEARNING: DeepLearningAgent,
+    # High-economic-value industry domains
+    Domain.HEALTHCARE: HealthcareAgent,
+    Domain.CLIMATE_ENERGY: ClimateEnergyAgent,
+    Domain.FINANCE_ECONOMICS: FinanceEconomicsAgent,
+    Domain.CYBERSECURITY: CybersecurityAgent,
+    Domain.BIOTECH_GENOMICS: BiotechGenomicsAgent,
+    Domain.SUPPLY_CHAIN: SupplyChainAgent,
+    # Enterprise problem domains
+    Domain.LEGAL_COMPLIANCE: LegalComplianceAgent,
+    Domain.ENTERPRISE_ARCHITECTURE: EnterpriseArchitectureAgent,
+    Domain.MARKETING_GROWTH: MarketingGrowthAgent,
+    Domain.ORGANIZATIONAL_BEHAVIOR: OrganizationalBehaviorAgent,
+    Domain.STRATEGY_INTELLIGENCE: StrategyIntelligenceAgent,
+    # Mastery / interview / PhD research domains
+    Domain.ALGORITHMS_PROGRAMMING: AlgorithmsProgrammingAgent,
+    Domain.INTERVIEW_PREP: InterviewPrepAgent,
+    Domain.EE_LLM_RESEARCH: EELLMResearchAgent,
 }
 
 
@@ -49,12 +103,13 @@ class AgentOrchestrator:
 
     Parameters
     ----------
-    llm_provider:
-        ``"anthropic"`` or ``"openai"``.  The same provider is used for all
-        domain agents and the weighing system.
-    model:
-        Explicit model name (e.g. ``"claude-3-haiku-20240307"``).
-        Defaults to the provider's recommended fast model.
+    backend_spec:
+        A provider spec string such as ``"mock"``, ``"ollama:llama3.1:8b"``,
+        ``"groq:llama-3.1-8b-instant"``, etc.  Only free/open providers are
+        supported.  Defaults to ``"mock"`` (offline, no model required).
+    backend:
+        A pre-constructed ``LLMBackend`` instance.  When supplied,
+        *backend_spec* is ignored.
     use_mcp:
         Whether to enable the MCP internet-search client for agents.
     max_workers:
@@ -62,33 +117,39 @@ class AgentOrchestrator:
     max_domains:
         Maximum number of domain agents to invoke per question.
         When ``None`` all relevant agents are used.
+
+    .. deprecated::
+        ``llm_provider`` and ``model`` keyword arguments are accepted but
+        ignored; pass ``backend_spec`` or ``backend`` instead.
     """
 
     def __init__(
         self,
-        llm_provider: str = "anthropic",
-        model: Optional[str] = None,
+        backend_spec: str = "mock",
+        backend: Optional[LLMBackend] = None,
         use_mcp: bool = True,
         max_workers: int = 7,
         max_domains: Optional[int] = None,
+        # Legacy kwargs — accepted but ignored
+        llm_provider: str = "mock",
+        model: Optional[str] = None,
     ) -> None:
-        self.llm_provider = llm_provider
-        self.model = model
+        if backend is not None:
+            self._backend: LLMBackend = backend
+        else:
+            self._backend = get_backend(backend_spec)
+
         self.use_mcp = use_mcp
         self.max_workers = max_workers
         self.max_domains = max_domains
 
         self._mcp_client = MCPClient() if use_mcp else None
-        self._llm_client = self._init_llm_client()
-        self._weighing_system = WeighingSystem(
-            llm_client=self._llm_client,
-            llm_provider=llm_provider,
-            model=model,
-        )
+        self._weighing_system = WeighingSystem(backend=self._backend)
+        self._debate_engine = DebateEngine(backend=self._backend)
         self._intuition_capture = IntuitionCapture(interactive=True)
 
     # ------------------------------------------------------------------
-    # Primary entry point
+    # Primary entry point — weigh human intuition against agents
     # ------------------------------------------------------------------
 
     def run(
@@ -98,7 +159,7 @@ class AgentOrchestrator:
         prefilled_intuition: Optional[HumanIntuition] = None,
         domains: Optional[list[Domain]] = None,
     ) -> WeighingResult:
-        """Run the full pipeline for a single *question*.
+        """Run the full weighing pipeline for a single *question*.
 
         Parameters
         ----------
@@ -110,24 +171,303 @@ class AgentOrchestrator:
             Explicit list of domains to query.  When ``None`` the orchestrator
             infers the most relevant domains from the question text.
         """
-        # Step 1 – capture human intuition
+        intuition = self._intuition_capture.capture(
+            question, prefilled=prefilled_intuition
+        )
+        selected_domains = domains or self._select_domains(question, intuition)
+        agents = self._build_agents(selected_domains)
+        responses = self._query_agents(agents, question)
+        return self._weighing_system.weigh(intuition, responses)
+
+    # ------------------------------------------------------------------
+    # Debate entry point — human + tool evidence + agents
+    # ------------------------------------------------------------------
+
+    def debate(
+        self,
+        question: str,
+        *,
+        prefilled_intuition: Optional[HumanIntuition] = None,
+        domains: Optional[list[Domain]] = None,
+    ) -> DebateResult:
+        """Run a structured multi-party debate for *question*.
+
+        The debate pits three perspectives against each other:
+
+        1. **Human intuition** — the user's answer and reasoning.
+        2. **Tool / MCP evidence** — facts retrieved from web search.
+        3. **Domain-agent reasoning** — expert analysis from LLM-backed agents.
+
+        Agreements and divergences are surfaced explicitly in each
+        :class:`DebateRound`, and a moderated verdict is produced.
+
+        Parameters
+        ----------
+        question:
+            The question to debate.
+        prefilled_intuition:
+            If provided, skip interactive capture.
+        domains:
+            Explicit domain list; auto-detected when ``None``.
+        """
+        intuition = self._intuition_capture.capture(
+            question, prefilled=prefilled_intuition
+        )
+        selected_domains = domains or self._select_domains(question, intuition)
+        agents = self._build_agents(selected_domains)
+        responses = self._query_agents(agents, question)
+
+        # Gather MCP tool evidence (empty list when MCP is disabled)
+        tool_results = []
+        if self._mcp_client is not None:
+            try:
+                tool_results = self._mcp_client.search(question, num_results=5)
+            except Exception:
+                tool_results = []
+
+        return self._debate_engine.debate(intuition, responses, tool_results)
+
+    # ------------------------------------------------------------------
+    # Interview prep entry point
+    # ------------------------------------------------------------------
+
+    def interview_prep(
+        self,
+        question: str,
+        *,
+        prefilled_intuition: Optional[HumanIntuition] = None,
+    ) -> InterviewResult:
+        """Run a FAANG interview coaching session for *question*.
+
+        Routes the question through three complementary agents:
+
+        - :class:`InterviewPrepAgent` — technical correctness, pattern
+          identification, optimal solution, follow-up variants.
+        - :class:`AlgorithmsProgrammingAgent` — deep algorithmic and
+          language-level insight (Python/Rust/Go).
+        - :class:`SocialScienceAgent` — psychological readiness, stress
+          management, communication coaching, STAR framing.
+
+        Uses the existing :class:`WeighingSystem` to score the candidate's
+        answer against the combined expert consensus, then packages the
+        results into a structured :class:`InterviewResult`.
+        """
         intuition = self._intuition_capture.capture(
             question, prefilled=prefilled_intuition
         )
 
-        # Step 2 – select domains
-        selected_domains = domains or self._select_domains(question, intuition)
-
-        # Step 3 – build agents
-        agents = self._build_agents(selected_domains)
-
-        # Step 4 – query agents in parallel
+        # Always use the three interview-coaching domains
+        coaching_domains = [
+            Domain.INTERVIEW_PREP,
+            Domain.ALGORITHMS_PROGRAMMING,
+            Domain.SOCIAL_SCIENCE,
+        ]
+        agents = self._build_agents(coaching_domains)
         responses = self._query_agents(agents, question)
 
-        # Step 5 – weigh intuition against agent responses
-        result = self._weighing_system.weigh(intuition, responses)
+        # Score the candidate's answer with the weighing system
+        weighing = self._weighing_system.weigh(intuition, responses)
 
-        return result
+        # Partition responses by domain
+        tech_resp = next(
+            (r for r in responses if r.domain == Domain.INTERVIEW_PREP), None
+        )
+        algo_resp = next(
+            (r for r in responses if r.domain == Domain.ALGORITHMS_PROGRAMMING), None
+        )
+        social_resp = next(
+            (r for r in responses if r.domain == Domain.SOCIAL_SCIENCE), None
+        )
+
+        return InterviewResult(
+            question=question,
+            candidate_answer=intuition.intuitive_answer,
+            candidate_confidence=intuition.confidence,
+            technical_score=weighing.intuition_accuracy_pct / 100.0,
+            technical_feedback=tech_resp.answer if tech_resp else "",
+            technical_reasoning=tech_resp.reasoning if tech_resp else "",
+            algorithmic_insight=algo_resp.answer if algo_resp else "",
+            mental_preparation=social_resp.answer if social_resp else "",
+            overall_analysis=weighing.overall_analysis,
+            synthesized_answer=weighing.synthesized_answer,
+            recommendations=weighing.recommendations,
+        )
+
+    # ------------------------------------------------------------------
+    # Model cycling / evaluation entry point
+    # ------------------------------------------------------------------
+
+    def evaluate_models(
+        self,
+        question: str,
+        model_specs: list[str],
+        *,
+        prefilled_intuition: Optional[HumanIntuition] = None,
+        domains: Optional[list[Domain]] = None,
+    ) -> ModelEvaluationResult:
+        """Cycle through *model_specs* and evaluate each against *question*.
+
+        For every model backend the full dual-pipeline runs:
+        human intuition → domain agents (intuition + MCP) → WeighingSystem.
+
+        Models that are unavailable (server down, missing API key, etc.) are
+        recorded as unavailable and skipped gracefully — they never cause the
+        whole evaluation to fail.
+
+        Parameters
+        ----------
+        question:
+            The question to investigate across all models.
+        model_specs:
+            List of provider spec strings, e.g.
+            ``["mock", "ollama:llama3.1:8b", "groq:llama-3.1-8b-instant"]``.
+        prefilled_intuition:
+            Human intuition to use for all runs.  When ``None`` the user is
+            prompted interactively on the **first** run; subsequent runs reuse
+            the same intuition so the comparison is fair.
+        domains:
+            Explicit domain list; auto-detected when ``None``.
+
+        Returns
+        -------
+        ModelEvaluationResult
+            Per-model results plus cross-model consensus and divergence.
+        """
+        import time
+
+        # Capture intuition once (interactively if needed) so all model runs
+        # see the same human input and results are comparable.
+        intuition = self._intuition_capture.capture(
+            question, prefilled=prefilled_intuition
+        )
+        selected_domains = domains or self._select_domains(question, intuition)
+
+        run_results: list[ModelRunResult] = []
+
+        for spec in model_specs:
+            t0 = time.monotonic()
+            try:
+                candidate_backend = get_backend(spec)
+            except ValueError as exc:
+                run_results.append(ModelRunResult(
+                    model_spec=spec,
+                    backend_available=False,
+                    weighing_result=None,
+                    error=f"Invalid spec: {exc}",
+                ))
+                continue
+
+            try:
+                # Spin up a temporary orchestrator with this backend
+                tmp_orch = AgentOrchestrator(
+                    backend=candidate_backend,
+                    use_mcp=self.use_mcp,
+                    max_domains=self.max_domains,
+                )
+                result = tmp_orch.run(
+                    question,
+                    prefilled_intuition=intuition,
+                    domains=selected_domains,
+                )
+                tmp_orch.close()
+                elapsed = round(time.monotonic() - t0, 2)
+                run_results.append(ModelRunResult(
+                    model_spec=spec,
+                    backend_available=True,
+                    weighing_result=result,
+                    duration_seconds=elapsed,
+                ))
+            except Exception as exc:
+                elapsed = round(time.monotonic() - t0, 2)
+                run_results.append(ModelRunResult(
+                    model_spec=spec,
+                    backend_available=False,
+                    weighing_result=None,
+                    error=str(exc),
+                    duration_seconds=elapsed,
+                ))
+
+        return self._build_evaluation_result(question, run_results)
+
+    # ------------------------------------------------------------------
+    # Model evaluation helpers
+    # ------------------------------------------------------------------
+
+    def _build_evaluation_result(
+        self,
+        question: str,
+        run_results: list[ModelRunResult],
+    ) -> ModelEvaluationResult:
+        available = [r for r in run_results if r.backend_available and r.weighing_result]
+        models_available = len(available)
+        models_evaluated = len(run_results)
+
+        if not available:
+            return ModelEvaluationResult(
+                question=question,
+                model_results=run_results,
+                consensus_answer="No models were available to evaluate.",
+                divergence_summary="All models unavailable.",
+                best_model_spec="none",
+                models_evaluated=models_evaluated,
+                models_available=0,
+                mean_intuition_accuracy_pct=0.0,
+            )
+
+        # Best model = highest intuition accuracy
+        best = max(available, key=lambda r: r.weighing_result.intuition_accuracy_pct)  # type: ignore[union-attr]
+        mean_acc = round(
+            sum(r.weighing_result.intuition_accuracy_pct for r in available) / models_available,  # type: ignore[union-attr]
+            1,
+        )
+
+        # Consensus: synthesized answers from all models → find common tokens
+        answers = [r.weighing_result.synthesized_answer for r in available]  # type: ignore[union-attr]
+        consensus = self._compute_consensus(answers)
+
+        # Divergence: models whose accuracy is > 20 pts from the mean
+        outliers = [
+            f"{r.model_spec} ({r.weighing_result.intuition_accuracy_pct:.1f}%)"  # type: ignore[union-attr]
+            for r in available
+            if abs(r.weighing_result.intuition_accuracy_pct - mean_acc) > 20  # type: ignore[union-attr]
+        ]
+        divergence = (
+            f"Outlier models: {', '.join(outliers)}" if outliers
+            else f"All {models_available} models were within ±20% of mean accuracy ({mean_acc:.1f}%)."
+        )
+
+        return ModelEvaluationResult(
+            question=question,
+            model_results=run_results,
+            consensus_answer=consensus,
+            divergence_summary=divergence,
+            best_model_spec=best.model_spec,
+            models_evaluated=models_evaluated,
+            models_available=models_available,
+            mean_intuition_accuracy_pct=mean_acc,
+        )
+
+    @staticmethod
+    def _compute_consensus(answers: list[str]) -> str:
+        """Return the answer that contains the most tokens shared by all answers."""
+        if not answers:
+            return ""
+        if len(answers) == 1:
+            return answers[0]
+        # Score each answer by how many of its tokens appear in ALL others
+        import re
+
+        def tokens(text: str) -> set[str]:
+            return set(re.findall(r"[a-z]{4,}", text.lower()))
+
+        all_token_sets = [tokens(a) for a in answers]
+        universal = set.intersection(*all_token_sets)
+        scored = sorted(
+            answers,
+            key=lambda a: len(tokens(a) & universal),
+            reverse=True,
+        )
+        return scored[0]
 
     # ------------------------------------------------------------------
     # Domain selection
@@ -142,7 +482,6 @@ class AgentOrchestrator:
 
         # Always include at least 3 domains for breadth
         if len(inferred) < 3:
-            # Add remaining domains that were not already selected
             for d in Domain:
                 if d not in inferred:
                     inferred.append(d)
@@ -166,8 +505,7 @@ class AgentOrchestrator:
                 continue
             agent = cls(
                 mcp_client=self._mcp_client,
-                llm_provider=self.llm_provider,
-                model=self.model,
+                backend=self._backend,
             )
             agents.append(agent)
         return agents
@@ -191,7 +529,6 @@ class AgentOrchestrator:
                 try:
                     responses[idx] = future.result()
                 except Exception as exc:
-                    # Build a fallback response so the pipeline never crashes
                     responses[idx] = AgentResponse(
                         domain=agents[idx].domain,
                         answer=f"Agent error: {exc}",
@@ -200,28 +537,6 @@ class AgentOrchestrator:
                     )
 
         return [responses[i] for i in sorted(responses)]
-
-    # ------------------------------------------------------------------
-    # LLM client initialisation
-    # ------------------------------------------------------------------
-
-    def _init_llm_client(self) -> Optional[object]:
-        if self.llm_provider == "anthropic":
-            try:
-                import anthropic  # type: ignore
-
-                return anthropic.Anthropic(
-                    api_key=os.environ.get("ANTHROPIC_API_KEY", "")
-                )
-            except ImportError:
-                return None
-        else:
-            try:
-                import openai  # type: ignore
-
-                return openai.OpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
-            except ImportError:
-                return None
 
     # ------------------------------------------------------------------
     # Cleanup
@@ -237,3 +552,5 @@ class AgentOrchestrator:
 
     def __exit__(self, *_: object) -> None:
         self.close()
+
+

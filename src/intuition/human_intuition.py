@@ -58,6 +58,94 @@ _DOMAIN_KEYWORDS: dict[Domain, list[str]] = {
         "pretrain", "foundation model", "diffusion", "generative", "llama",
         "reinforcement learning", "rlhf", "lora", "bert", "token",
     ],
+    # High-economic-value industry domains
+    Domain.HEALTHCARE: [
+        "disease", "drug", "medicine", "patient", "clinical", "diagnosis",
+        "therapy", "treatment", "hospital", "pharma", "cancer", "vaccine",
+        "genomic", "biomarker", "trial", "dose", "symptom", "surgery",
+        "health", "epidemic", "public health", "imaging", "radiology",
+    ],
+    Domain.CLIMATE_ENERGY: [
+        "climate", "carbon", "emission", "greenhouse", "renewable", "solar",
+        "wind", "battery", "storage", "grid", "decarbonisation", "net zero",
+        "fossil fuel", "clean energy", "hydrogen", "capture", "warming",
+        "temperature", "sea level", "electricity", "power", "energy transition",
+    ],
+    Domain.FINANCE_ECONOMICS: [
+        "market", "risk", "finance", "economic", "investment", "capital",
+        "portfolio", "asset", "equity", "bond", "derivative", "hedge",
+        "monetary", "inflation", "interest rate", "bank", "credit", "liquidity",
+        "gdp", "fiscal", "arbitrage", "quant", "trading", "valuation",
+    ],
+    Domain.CYBERSECURITY: [
+        "security", "attack", "vulnerability", "threat", "encrypt", "cyber",
+        "malware", "ransomware", "phishing", "firewall", "intrusion",
+        "exploit", "zero-day", "authentication", "cryptography", "hack",
+        "breach", "privacy", "compliance", "password", "certificate",
+    ],
+    Domain.BIOTECH_GENOMICS: [
+        "gene", "genome", "protein", "crispr", "cell", "biotech",
+        "dna", "rna", "sequencing", "mutation", "chromosome", "allele",
+        "expression", "stem cell", "therapy", "synthetic biology", "enzyme",
+        "amino acid", "folding", "omics", "microbiome", "bioinformatics",
+    ],
+    Domain.SUPPLY_CHAIN: [
+        "supply", "logistics", "inventory", "demand", "shipping", "warehouse",
+        "procurement", "sourcing", "distribution", "fulfillment", "route",
+        "lead time", "stock", "vendor", "delivery", "freight", "last mile",
+        "operations", "forecast", "resilience", "disruption", "manufacturing",
+    ],
+    # Enterprise problem domains
+    Domain.LEGAL_COMPLIANCE: [
+        "contract", "legal", "compliance", "regulation", "law", "liability",
+        "intellectual property", "patent", "trademark", "copyright", "gdpr",
+        "sox", "hipaa", "litigation", "arbitration", "indemnification",
+        "governance", "fiduciary", "regulatory", "audit", "policy",
+    ],
+    Domain.ENTERPRISE_ARCHITECTURE: [
+        "architecture", "microservice", "cloud", "kubernetes", "docker",
+        "api", "platform", "technical debt", "migration", "integration",
+        "data mesh", "event-driven", "ddd", "cqrs", "service mesh",
+        "infrastructure", "devops", "devsecops", "observability", "sre",
+    ],
+    Domain.MARKETING_GROWTH: [
+        "marketing", "growth", "customer", "acquisition", "retention",
+        "conversion", "funnel", "attribution", "clv", "cac", "churn",
+        "brand", "campaign", "segment", "pricing", "revenue", "demand gen",
+        "seo", "content", "product-led", "viral", "paid media",
+    ],
+    Domain.ORGANIZATIONAL_BEHAVIOR: [
+        "organisation", "culture", "talent", "workforce", "leadership",
+        "team", "performance", "engagement", "motivation", "hiring",
+        "retention", "succession", "diversity", "inclusion", "coaching",
+        "change management", "communication", "collaboration", "wellbeing",
+    ],
+    Domain.STRATEGY_INTELLIGENCE: [
+        "strategy", "competitive", "market", "positioning", "moat",
+        "competitive advantage", "m&a", "acquisition", "merger", "scenario",
+        "porter", "value chain", "disruption", "business model", "innovation",
+        "intelligence", "intelligence gathering", "swot", "pestle",
+    ],
+    # Mastery / interview / PhD research domains
+    Domain.ALGORITHMS_PROGRAMMING: [
+        "algorithm", "data structure", "python", "rust", "golang", "go",
+        "complexity", "big-o", "dynamic programming", "graph", "tree",
+        "sorting", "binary search", "recursion", "pointer", "iterator",
+        "ownership", "borrow", "goroutine", "channel", "async", "concurrency",
+    ],
+    Domain.INTERVIEW_PREP: [
+        "interview", "leetcode", "system design", "faang", "google", "meta",
+        "amazon", "apple", "microsoft", "coding", "behavioral", "star",
+        "whiteboard", "offer", "technical screen", "oa", "online assessment",
+        "two pointer", "sliding window", "backtracking", "dp pattern",
+    ],
+    Domain.EE_LLM_RESEARCH: [
+        "llm", "signal processing", "safety", "alignment", "transformer",
+        "phd", "research", "dissertation", "paper", "publication", "fft",
+        "filter", "spectrum", "modulation", "jailbreak", "interpretability",
+        "mechanistic", "rlhf", "dpo", "fine-tuning", "inference", "training",
+        "hallucination", "red team", "watermark", "sparse autoencoder",
+    ],
 }
 
 
