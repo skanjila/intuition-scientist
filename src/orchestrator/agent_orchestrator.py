@@ -19,8 +19,9 @@ Additional entry points
 
 from __future__ import annotations
 
+import logging
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
-from typing import Optional
+from typing import Callable, Optional
 
 from src.agents.base_agent import BaseAgent
 from src.agents.computer_science_agent import ComputerScienceAgent
@@ -168,6 +169,8 @@ class AgentOrchestrator:
         adaptive_agents: bool = False,
         target_latency_ms: Optional[int] = None,
         agent_timeout_seconds: float = 30.0,
+        verbose: bool = False,
+        progress_callback: Optional[Callable[[str], None]] = None,
         # Legacy kwargs — accepted but ignored
         llm_provider: str = "mock",
         model: Optional[str] = None,
@@ -185,6 +188,12 @@ class AgentOrchestrator:
         self.adaptive_agents = adaptive_agents
         self.target_latency_ms = target_latency_ms
         self.agent_timeout_seconds = agent_timeout_seconds
+        self.verbose = verbose
+
+        # Progress callback — called with a human-readable status string for
+        # every notable event (domain selection, agent start/finish, MCP).
+        # Defaults to a no-op; the CLI wires this to print().
+        self._progress: Callable[[str], None] = progress_callback or (lambda _: None)
 
         self._mcp_client = MCPClient() if use_mcp else None
         self._weighing_system = WeighingSystem(
@@ -237,11 +246,20 @@ class AgentOrchestrator:
         # ------------------------------------------------------------------
         # Step 2 — Select domains and query agents
         # ------------------------------------------------------------------
+        mcp_status = "enabled" if self.use_mcp else "disabled"
+        self._progress(f"🔍  MCP internet search: {mcp_status}")
+
         if self.adaptive_agents and domains is None:
             # Use the evolving adaptive loop: start small, expand if needed.
             responses = self._adaptive_select_and_run(question, intuition)
         else:
             selected_domains = domains or self._select_domains(question, intuition)
+            domain_names = ", ".join(
+                d.value.replace("_", " ").title() for d in selected_domains
+            )
+            self._progress(
+                f"📋  Selected {len(selected_domains)} domain(s): {domain_names}"
+            )
             agents = self._build_agents(selected_domains)
             responses = self._query_agents(agents, question)
 
@@ -781,10 +799,14 @@ class AgentOrchestrator:
         whole run indefinitely.  Timed-out agents get a low-confidence
         placeholder ``AgentResponse``; the underlying thread is left to finish
         in the background (threads cannot be forcibly killed in Python).
+
+        Progress events are emitted via ``self._progress`` so callers (e.g. the
+        CLI) can display per-agent status without any coupling to stdout/stderr.
         """
         if not agents:
             return []
 
+        logger = logging.getLogger(__name__)
         responses: dict[int, AgentResponse] = {}
 
         # We manage the executor manually so we can call shutdown(wait=False)
@@ -792,13 +814,50 @@ class AgentOrchestrator:
         # some agent threads are still sleeping past their timeout.
         executor = ThreadPoolExecutor(max_workers=self.max_workers)
         try:
+            # Wrap each agent call to emit per-agent progress messages.
+            def _run_agent(idx: int, agent: BaseAgent) -> tuple[int, AgentResponse]:
+                domain_label = agent.domain.value.replace("_", " ").title()
+                self._progress(f"  ▶  [{domain_label}] querying…")
+                logger.debug("[agent] Starting %s", domain_label)
+                result = agent.answer(question)
+                mcp_note = " (MCP: results)" if result.mcp_context else " (MCP: none)"
+                pipeline = (
+                    "tool"
+                    if result.tool_weight > result.intuition_weight
+                    else "intuition"
+                )
+                self._progress(
+                    f"  ✓  [{domain_label}] done — "
+                    f"conf={result.confidence:.0%}, "
+                    f"pipeline={pipeline}"
+                    + (mcp_note if self.use_mcp else "")
+                )
+                logger.debug(
+                    "[agent] %s finished conf=%.2f pipeline=%s%s",
+                    domain_label,
+                    result.confidence,
+                    pipeline,
+                    mcp_note if self.use_mcp else "",
+                )
+                return idx, result
+
             futures = [
-                executor.submit(agent.answer, question) for agent in agents
+                executor.submit(_run_agent, i, agent) for i, agent in enumerate(agents)
             ]
-            for idx, future in enumerate(futures):
+            for future in futures:
                 try:
-                    responses[idx] = future.result(timeout=self.agent_timeout_seconds)
+                    idx, resp = future.result(timeout=self.agent_timeout_seconds)
+                    responses[idx] = resp
                 except FuturesTimeoutError:
+                    # We can't recover the idx directly from a timed-out future;
+                    # find the first agent whose result we haven't received yet.
+                    missing = sorted(set(range(len(agents))) - set(responses))
+                    idx = missing[0] if missing else len(responses)
+                    domain_label = agents[idx].domain.value.replace("_", " ").title()
+                    self._progress(
+                        f"  ⚠  [{domain_label}] timed out after "
+                        f"{self.agent_timeout_seconds:.1f}s"
+                    )
                     responses[idx] = AgentResponse(
                         domain=agents[idx].domain,
                         answer=(
@@ -808,6 +867,8 @@ class AgentOrchestrator:
                         confidence=0.1,
                     )
                 except Exception as exc:
+                    missing = sorted(set(range(len(agents))) - set(responses))
+                    idx = missing[0] if missing else len(responses)
                     responses[idx] = AgentResponse(
                         domain=agents[idx].domain,
                         answer=f"Agent error: {exc}",
