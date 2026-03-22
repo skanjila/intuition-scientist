@@ -146,6 +146,25 @@ _DOMAIN_KEYWORDS: dict[Domain, list[str]] = {
         "mechanistic", "rlhf", "dpo", "fine-tuning", "inference", "training",
         "hallucination", "red team", "watermark", "sparse autoencoder",
     ],
+    # Dedicated signal processing domain
+    Domain.SIGNAL_PROCESSING: [
+        "signal", "filter", "fft", "dft", "fourier", "laplace", "z-transform",
+        "nyquist", "sampling", "aliasing", "convolution", "deconvolution",
+        "spectrum", "frequency", "bandwidth", "noise", "snr", "lms", "rls",
+        "wiener", "kalman", "adaptive filter", "wavelet", "stft", "spectrogram",
+        "fir", "iir", "butterworth", "chebyshev", "bode", "impulse response",
+        "transfer function", "pole", "zero", "multirate", "decimation",
+        "interpolation", "polyphase", "music algorithm", "esprit", "sparse",
+    ],
+    # Experiment runner domain
+    Domain.EXPERIMENT_RUNNER: [
+        "experiment", "hypothesis", "test", "simulation", "simulate",
+        "model", "predict", "verify", "validate", "measure", "observation",
+        "variable", "control", "outcome", "result", "evidence", "protocol",
+        "reproduce", "reproducible", "monte carlo", "sweep", "sensitivity",
+        "perturbation", "fermi estimate", "order of magnitude", "toy example",
+        "numerical", "parametric", "falsifiable", "trial", "run",
+    ],
 }
 
 

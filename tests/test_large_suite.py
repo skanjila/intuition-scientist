@@ -1,8 +1,8 @@
-"""Large test suite — dual-pipeline agents across all 22 domains.
+"""Large test suite — dual-pipeline agents across all domains.
 
 Tests the complete system:
 - Dual-pipeline (intuition + MCP) weight computation per domain
-- All 22 domain agents produce structured AgentResponse with weight fields
+- All domain agents produce structured AgentResponse with weight fields
 - Debate engine produces DebateResult with rounds, positions, verdict
 - Interview prep mode returns InterviewResult with all three agents
 - Model cycling returns ModelEvaluationResult (gated: RUN_MODEL_SWEEP=1)
@@ -144,6 +144,16 @@ DOMAIN_QUESTIONS: dict[Domain, tuple[str, str, str]] = {
         "What is the connection between attention mechanisms in transformers and adaptive filtering in signal processing?",
         "Self-attention computes a weighted sum of values where weights come from query-key dot products — structurally identical to a time-varying FIR filter where the filter coefficients adapt per input. Both perform learned, input-dependent linear combinations.",
         "Wiener filtering minimises MSE given signal statistics; attention minimises cross-entropy given learned representations. The Evoformer uses attention over sequence and pair dimensions analogously to 2D filtering. SSMs (Mamba/S4) make this connection explicit via HiPPO theory and linear recurrences.",
+    ),
+    Domain.SIGNAL_PROCESSING: (
+        "How do you design an optimal Wiener filter for removing additive white noise from a signal?",
+        "The Wiener filter minimises the mean-square error between the filtered output and the desired signal. In the frequency domain it equals S_xy(f) / S_xx(f), the cross-PSD divided by the input PSD.",
+        "Derived from the orthogonality principle: the error must be orthogonal to all observations. For white noise, S_xx = S_signal + S_noise, so the filter reduces to the SNR-weighted frequency response.",
+    ),
+    Domain.EXPERIMENT_RUNNER: (
+        "Does adding momentum to gradient descent speed up convergence on a quadratic loss surface?",
+        "Yes — momentum accumulates a velocity term that damps oscillations in ravines and accelerates descent along directions of consistent gradient. The convergence rate improves from O(κ) to O(√κ) for quadratic objectives.",
+        "Polyak (1964) showed heavy-ball momentum achieves optimal convergence rate on strongly convex quadratics. Nesterov's accelerated gradient generalises this with a look-ahead correction, provably achieving O(1/k²) vs O(1/k) for gradient descent.",
     ),
 }
 

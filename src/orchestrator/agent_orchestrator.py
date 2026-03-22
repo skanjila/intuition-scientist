@@ -47,6 +47,9 @@ from src.agents.strategy_intelligence_agent import StrategyIntelligenceAgent
 from src.agents.algorithms_programming_agent import AlgorithmsProgrammingAgent
 from src.agents.interview_prep_agent import InterviewPrepAgent
 from src.agents.ee_llm_research_agent import EELLMResearchAgent
+# Signal processing and experiment runner agents
+from src.agents.signal_processing_agent import SignalProcessingAgent
+from src.agents.experiment_runner_agent import ExperimentRunnerAgent
 from src.analysis.debate_engine import DebateEngine
 from src.analysis.weighing_system import WeighingSystem
 from src.intuition.human_intuition import IntuitionCapture
@@ -95,6 +98,9 @@ _AGENT_CLASSES: dict[Domain, type[BaseAgent]] = {
     Domain.ALGORITHMS_PROGRAMMING: AlgorithmsProgrammingAgent,
     Domain.INTERVIEW_PREP: InterviewPrepAgent,
     Domain.EE_LLM_RESEARCH: EELLMResearchAgent,
+    # Signal processing and experiment runner
+    Domain.SIGNAL_PROCESSING: SignalProcessingAgent,
+    Domain.EXPERIMENT_RUNNER: ExperimentRunnerAgent,
 }
 
 

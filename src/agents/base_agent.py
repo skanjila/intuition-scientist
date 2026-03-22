@@ -54,6 +54,10 @@ _INTUITION_HEAVY: frozenset[Domain] = frozenset({
     Domain.PHYSICS,
     Domain.NEURAL_NETWORKS,
     Domain.DEEP_LEARNING,
+    # Signal processing and experiment design rely heavily on first-principles
+    # reasoning; tool evidence is secondary to domain derivation.
+    Domain.SIGNAL_PROCESSING,
+    Domain.EXPERIMENT_RUNNER,
 })
 
 # Domains where verified external evidence is especially valuable

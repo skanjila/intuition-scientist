@@ -36,6 +36,10 @@ class Domain(str, Enum):
     INTERVIEW_PREP = "interview_prep"
     # PhD research domains
     EE_LLM_RESEARCH = "ee_llm_research"
+    # Signal processing (dedicated iterative-problem agent)
+    SIGNAL_PROCESSING = "signal_processing"
+    # Experiment runner (experiment-protocol and simulation agent)
+    EXPERIMENT_RUNNER = "experiment_runner"
 
 
 @dataclass

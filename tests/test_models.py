@@ -39,6 +39,9 @@ class TestDomain:
             "algorithms_programming",
             "interview_prep",
             "ee_llm_research",
+            # Signal processing and experiment runner
+            "signal_processing",
+            "experiment_runner",
         }
         assert {d.value for d in Domain} == expected
 
