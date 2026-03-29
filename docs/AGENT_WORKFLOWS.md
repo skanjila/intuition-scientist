@@ -19,6 +19,7 @@ Detailed instructions for building the most effective workflows with each of the
 7. [Routing questions to the right agent](#routing-questions-to-the-right-agent)
 8. [Adding a new custom agent](#adding-a-new-custom-agent)
 9. [Common pitfalls and fixes](#common-pitfalls-and-fixes)
+10. [Solver Policy — strategy-selection toggle](#solver-policy--strategy-selection-toggle)
 
 ---
 
@@ -995,3 +996,119 @@ def test_my_domain_agent_answers():
 **Cause:** `max_tokens` is too low for the agent's verbosity.
 
 **Fix:** Increase `--agent-max-tokens`. For iterative tutors (physics, signal) use at least 1024; for experiment runner use 2048.
+
+---
+
+## Solver Policy — strategy-selection toggle
+
+The **solver policy** is a meta-level toggle that decides *which execution approach* to use for each question.  It lives in `src/solver/` and is wired into `main.py` via five new CLI flags.
+
+### Available policies
+
+| Policy | Behaviour |
+|--------|-----------|
+| `auto` | **(default)** Deterministic routing from question features + small ε-greedy exploration (ε=0.05). Exploration is disabled for high-stakes questions. |
+| `baseline` | Deterministic routing only; no exploration. Preserves existing behaviour. |
+| `explore` | Higher exploration rate (ε=0.30 by default). Useful for discovering stronger strategies or gathering performance data. |
+| `fixed` | Always use the approach specified by `--solver-approach`. |
+
+### Available approaches
+
+| Approach | Execution strategy |
+|----------|--------------------|
+| `direct` | Standard non-adaptive pipeline (`AgentOrchestrator.run`). |
+| `adaptive` | Force the adaptive agent-expansion loop (same as `--adaptive-agents`). |
+| `debate` | Structured multi-party debate (`AgentOrchestrator.debate`) with the synthesised verdict surfaced as the primary answer. |
+| `experiment` | Classify with `ExperimentRunnerAgent.classify_question`; if experimentable, generate an experiment plan; otherwise fall back to `direct`. |
+| `portfolio` | Run `direct` + optionally `experiment` and/or extra debate agents; reconcile via `WeighingSystem`. |
+
+### CLI flags
+
+```
+--solver-policy   POLICY   auto|baseline|explore|fixed   (default: auto)
+--solver-approach APPROACH direct|adaptive|debate|experiment|portfolio (default: direct)
+--explore-epsilon ε        Float in [0,1]; overrides per-policy default epsilon.
+--explore-topk    K        Sample from top-K approaches during exploration (default: 3).
+--no-explore-high-stakes   Disable exploration when high-stakes signals detected (default: on).
+--explore-high-stakes      Allow exploration even on high-stakes questions.
+```
+
+### Examples
+
+#### Default auto policy (recommended)
+
+```bash
+python main.py --question "How does gradient descent converge?"
+# Solver policy: auto | approach: experiment  (or direct, depending on features)
+```
+
+#### Force the debate approach
+
+```bash
+python main.py --question "Pros and cons of microservices vs monolith?" \
+               --solver-policy fixed --solver-approach debate
+```
+
+#### Force the portfolio approach (ensemble)
+
+```bash
+python main.py --question "How should I design this distributed system?" \
+               --solver-policy fixed --solver-approach portfolio
+```
+
+#### Increase exploration to discover alternative approaches
+
+```bash
+python main.py --question "What optimisation method converges fastest?" \
+               --solver-policy explore --explore-epsilon 0.50 --explore-topk 4
+```
+
+#### Baseline (preserve legacy behaviour)
+
+```bash
+python main.py --question "What is quantum entanglement?" \
+               --solver-policy baseline
+# Equivalent to omitting --solver-policy if the recommended approach is direct.
+```
+
+#### Allow exploration on high-stakes questions (disabled by default)
+
+```bash
+python main.py --question "What are the financial risks of this investment?" \
+               --solver-policy explore --explore-high-stakes
+```
+
+### How routing works
+
+1. **Feature extraction** (no LLM): length, high-stakes keywords, experiment signals, debate signals.
+2. **Deterministic recommendation**:
+   - experimentable *and* debate-worthy → `portfolio`
+   - experimentable only → `experiment`
+   - debate-worthy only → `debate`
+   - long question (> 300 chars) → `adaptive`
+   - otherwise → `direct`
+3. **High-stakes gate**: if the question contains legal/medical/financial/security keywords and `--no-explore-high-stakes` is active, skip exploration.
+4. **Epsilon-greedy draw**: with probability ε, sample from the top-K approaches (weighted by feature scores); otherwise use the recommendation.
+5. **Dispatch**: the selected approach is passed to `AgentOrchestrator.run_solver`.
+
+### Programmatic usage
+
+```python
+from src.solver import SolverPolicy, SolverApproach, StrategyRouter
+
+router = StrategyRouter(
+    policy=SolverPolicy.AUTO,
+    auto_epsilon=0.05,
+    no_explore_high_stakes=True,
+)
+selection = router.select("How does gradient descent converge?")
+print(selection.approach)      # SolverApproach.EXPERIMENT
+print(selection.explored)      # False (or True if ε-greedy fired)
+print(selection.high_stakes_gate)  # False
+
+# With an orchestrator
+from src.orchestrator.agent_orchestrator import AgentOrchestrator
+with AgentOrchestrator(use_mcp=False) as orch:
+    result = orch.run_solver("How does gradient descent converge?", selection=selection)
+    print(result.synthesized_answer)
+```

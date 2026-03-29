@@ -461,6 +461,83 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     # ------------------------------------------------------------------
+    # Solver policy flags
+    # ------------------------------------------------------------------
+    solver_group = parser.add_argument_group(
+        "solver policy",
+        "Control the strategy-selection policy used to pick an execution approach.",
+    )
+    solver_group.add_argument(
+        "--solver-policy",
+        default="auto",
+        choices=["auto", "baseline", "explore", "fixed"],
+        metavar="POLICY",
+        help=(
+            "Solver-selection policy. "
+            "auto (default): route deterministically from question features with "
+            "small epsilon-greedy exploration (ε=0.05); exploration is disabled "
+            "for high-stakes questions. "
+            "baseline: deterministic routing, no exploration (preserves existing "
+            "behaviour). "
+            "explore: increase exploration (ε=0.30) to discover stronger strategies. "
+            "fixed: always use the approach specified by --solver-approach."
+        ),
+    )
+    solver_group.add_argument(
+        "--solver-approach",
+        default="direct",
+        choices=["direct", "adaptive", "debate", "experiment", "portfolio"],
+        metavar="APPROACH",
+        help=(
+            "Approach to use when --solver-policy=fixed. "
+            "direct (default): standard non-adaptive pipeline. "
+            "adaptive: force the adaptive agent-expansion loop. "
+            "debate: structured multi-party debate. "
+            "experiment: ExperimentRunnerAgent classification + plan. "
+            "portfolio: run 2-3 approaches and reconcile with WeighingSystem."
+        ),
+    )
+    solver_group.add_argument(
+        "--explore-epsilon",
+        type=float,
+        default=None,
+        metavar="ε",
+        help=(
+            "Epsilon for epsilon-greedy exploration in auto/explore policies "
+            "(0.0–1.0). Defaults: 0.05 for auto, 0.30 for explore. "
+            "Override with this flag."
+        ),
+    )
+    solver_group.add_argument(
+        "--explore-topk",
+        type=int,
+        default=3,
+        metavar="K",
+        help=(
+            "Number of top-scoring approaches to sample from during exploration "
+            "(default: 3). Larger values allow more diverse sampling."
+        ),
+    )
+    solver_group.add_argument(
+        "--no-explore-high-stakes",
+        action="store_true",
+        default=True,
+        dest="no_explore_high_stakes",
+        help=(
+            "Disable exploration for questions that contain high-stakes signals "
+            "(legal, medical, financial, security keywords). Default: enabled. "
+            "Pass --explore-high-stakes to allow exploration even on high-stakes "
+            "questions."
+        ),
+    )
+    solver_group.add_argument(
+        "--explore-high-stakes",
+        action="store_false",
+        dest="no_explore_high_stakes",
+        help="Allow exploration even when high-stakes signals are detected.",
+    )
+
+    # ------------------------------------------------------------------
     # Verbosity flags
     # ------------------------------------------------------------------
     verbosity_group = parser.add_mutually_exclusive_group()
@@ -577,6 +654,28 @@ def main(argv: Optional[list[str]] = None) -> None:
     quiet: bool = args.quiet
 
     # ------------------------------------------------------------------
+    # Solver policy flags
+    # ------------------------------------------------------------------
+    from src.solver import SolverApproach, SolverPolicy, StrategyRouter
+
+    solver_policy = SolverPolicy(args.solver_policy)
+    solver_approach = SolverApproach(args.solver_approach)
+    no_explore_high_stakes: bool = args.no_explore_high_stakes
+
+    # Build epsilon values: CLI override takes precedence over per-policy defaults
+    _auto_epsilon: float = args.explore_epsilon if args.explore_epsilon is not None else 0.05
+    _explore_epsilon: float = args.explore_epsilon if args.explore_epsilon is not None else 0.30
+
+    router = StrategyRouter(
+        policy=solver_policy,
+        forced_approach=solver_approach,
+        auto_epsilon=_auto_epsilon,
+        explore_epsilon=_explore_epsilon,
+        explore_topk=args.explore_topk,
+        no_explore_high_stakes=no_explore_high_stakes,
+    )
+
+    # ------------------------------------------------------------------
     # Progress callback
     # ------------------------------------------------------------------
     # In quiet mode: suppress all progress; in normal/verbose mode: print.
@@ -646,6 +745,32 @@ def main(argv: Optional[list[str]] = None) -> None:
     # Import here to keep startup fast when --help is used
     from src.orchestrator.agent_orchestrator import AgentOrchestrator
 
+    # ------------------------------------------------------------------
+    # Run solver — select approach via policy, then dispatch
+    # ------------------------------------------------------------------
+    selection = router.select(question)
+
+    if not quiet:
+        _print(
+            f"\n🎯  Solver policy: {solver_policy.value} | "
+            f"approach: {selection.approach.value}"
+            + (" [explored]" if selection.explored else "")
+            + (" [high-stakes gate]" if selection.high_stakes_gate else "")
+            + "\n"
+            if not HAS_RICH
+            else (
+                f"\n[bold magenta]🎯  Solver policy: {solver_policy.value}[/bold magenta] | "
+                f"[cyan]approach: {selection.approach.value}[/cyan]"
+                + (" [yellow][explored][/yellow]" if selection.explored else "")
+                + (" [red][high-stakes gate][/red]" if selection.high_stakes_gate else "")
+                + "\n"
+            )
+        )
+
+    # When the solver policy selects adaptive (or the legacy --adaptive-agents
+    # flag was passed) override the orchestrator flag so it is honoured.
+    _use_adaptive = adaptive_agents or (selection.approach.value == "adaptive")
+
     with AgentOrchestrator(
         backend_spec=backend_spec,
         use_mcp=use_mcp,
@@ -654,7 +779,7 @@ def main(argv: Optional[list[str]] = None) -> None:
         agent_max_tokens=agent_max_tokens,
         synthesis_max_tokens=synthesis_max_tokens,
         auto_intuition=auto_intuition,
-        adaptive_agents=adaptive_agents,
+        adaptive_agents=_use_adaptive,
         target_latency_ms=target_latency_ms,
         agent_timeout_seconds=agent_timeout_seconds,
         verbose=verbose,
@@ -663,7 +788,17 @@ def main(argv: Optional[list[str]] = None) -> None:
         if not quiet:
             _print("\n⏳  Querying domain experts…\n" if not HAS_RICH
                    else "\n[bold yellow]⏳  Querying domain experts…[/bold yellow]\n")
-        result = orchestrator.run(question, domains=domains)
+
+        # Use solver dispatch when policy is active (non-baseline or non-direct approach).
+        # The baseline policy with the default direct approach preserves legacy behaviour.
+        _use_solver = not (
+            solver_policy is SolverPolicy.BASELINE
+            and selection.approach is SolverApproach.DIRECT
+        )
+        if _use_solver:
+            result = orchestrator.run_solver(question, selection=selection, domains=domains)
+        else:
+            result = orchestrator.run(question, domains=domains)
 
     workflow_mode = WorkflowMapMode(args.workflow_map)
     _display_result(result, workflow_mode=workflow_mode)

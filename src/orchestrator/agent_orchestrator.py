@@ -21,7 +21,10 @@ from __future__ import annotations
 
 import logging
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
-from typing import Callable, Optional
+from typing import TYPE_CHECKING, Callable, Optional
+
+if TYPE_CHECKING:
+    from src.solver.router import SelectionResult
 
 from src.agents.base_agent import BaseAgent
 from src.agents.computer_science_agent import ComputerScienceAgent
@@ -264,6 +267,224 @@ class AgentOrchestrator:
             responses = self._query_agents(agents, question)
 
         return self._weighing_system.weigh(intuition, responses)
+
+    # ------------------------------------------------------------------
+    # Solver-policy dispatch entry point
+    # ------------------------------------------------------------------
+
+    def run_solver(
+        self,
+        question: str,
+        *,
+        selection: "SelectionResult",
+        prefilled_intuition: Optional[HumanIntuition] = None,
+        domains: Optional[list[Domain]] = None,
+    ) -> WeighingResult:
+        """Run the approach chosen by the :class:`~src.solver.router.StrategyRouter`.
+
+        This is the primary entry point when the solver-policy toggle is active.
+        It dispatches to one of ``direct``, ``adaptive``, ``debate``,
+        ``experiment``, or ``portfolio`` based on *selection.approach* and
+        always returns a :class:`WeighingResult` so the display path in
+        ``main.py`` remains unchanged.
+
+        Parameters
+        ----------
+        question:
+            The question to solve.
+        selection:
+            The :class:`~src.solver.router.SelectionResult` produced by
+            :meth:`~src.solver.router.StrategyRouter.select`.
+        prefilled_intuition:
+            Optional pre-built :class:`HumanIntuition`; passed through to
+            the underlying approach.
+        domains:
+            Explicit domain list; auto-detected when ``None``.
+        """
+        from src.solver.policy import SolverApproach
+
+        approach = selection.approach
+        self._progress(
+            f"🧭  Solver policy: {selection.recommended.value} recommended"
+            f" → {'exploring ' if selection.explored else ''}{approach.value}"
+            + (" [high-stakes gate active]" if selection.high_stakes_gate else "")
+        )
+
+        if approach is SolverApproach.DIRECT:
+            return self._run_direct(question, prefilled_intuition=prefilled_intuition, domains=domains)
+
+        if approach is SolverApproach.ADAPTIVE:
+            return self._run_adaptive(question, prefilled_intuition=prefilled_intuition)
+
+        if approach is SolverApproach.DEBATE:
+            return self._run_debate_as_weighing(question, prefilled_intuition=prefilled_intuition, domains=domains)
+
+        if approach is SolverApproach.EXPERIMENT:
+            return self._run_experiment(question, prefilled_intuition=prefilled_intuition, domains=domains)
+
+        if approach is SolverApproach.PORTFOLIO:
+            return self._run_portfolio(question, prefilled_intuition=prefilled_intuition, domains=domains)
+
+        # Fallback (should not happen)
+        return self._run_direct(question, prefilled_intuition=prefilled_intuition, domains=domains)
+
+    # ------------------------------------------------------------------
+    # Solver approach helpers
+    # ------------------------------------------------------------------
+
+    def _run_direct(
+        self,
+        question: str,
+        *,
+        prefilled_intuition: Optional[HumanIntuition] = None,
+        domains: Optional[list[Domain]] = None,
+    ) -> WeighingResult:
+        """Run the standard non-adaptive pipeline."""
+        self._progress("▶  Approach: direct")
+        return self.run(question, prefilled_intuition=prefilled_intuition, domains=domains)
+
+    def _run_adaptive(
+        self,
+        question: str,
+        *,
+        prefilled_intuition: Optional[HumanIntuition] = None,
+    ) -> WeighingResult:
+        """Force the adaptive agent-expansion loop and return a WeighingResult."""
+        self._progress("▶  Approach: adaptive (expansion loop enabled)")
+        intuition = self._resolve_intuition(question, prefilled_intuition)
+        responses = self._adaptive_select_and_run(question, intuition)
+        return self._weighing_system.weigh(intuition, responses)
+
+    def _run_debate_as_weighing(
+        self,
+        question: str,
+        *,
+        prefilled_intuition: Optional[HumanIntuition] = None,
+        domains: Optional[list[Domain]] = None,
+    ) -> WeighingResult:
+        """Run the structured debate and convert the result to a WeighingResult.
+
+        Runs domain agents once, feeds them to both the debate engine and the
+        weighing system, then overlays the richer debate synthesis on the
+        weighing result so the display path in ``main.py`` remains unchanged.
+        """
+        self._progress("▶  Approach: debate (structured multi-party analysis)")
+        intuition = self._resolve_intuition(question, prefilled_intuition)
+        selected_domains = domains or self._select_domains(question, intuition)
+        agents = self._build_agents(selected_domains)
+        responses = self._query_agents(agents, question)
+
+        # Gather MCP tool evidence (empty list when MCP is disabled)
+        tool_results = []
+        if self._mcp_client is not None:
+            try:
+                tool_results = self._mcp_client.search(question, num_results=5)
+            except Exception:
+                tool_results = []
+
+        # Run structured debate for richer synthesis
+        debate_result = self._debate_engine.debate(intuition, responses, tool_results)
+
+        # Compute weighing result for the standard display path
+        weigh = self._weighing_system.weigh(intuition, responses)
+        # Overlay the debate's synthesized verdict as the primary answer
+        weigh.synthesized_answer = debate_result.synthesized_verdict
+        return weigh
+
+    def _run_experiment(
+        self,
+        question: str,
+        *,
+        prefilled_intuition: Optional[HumanIntuition] = None,
+        domains: Optional[list[Domain]] = None,
+    ) -> WeighingResult:
+        """Route through ExperimentRunnerAgent when the question is experimentable.
+
+        If the question is not experimentable (score < threshold), falls back
+        to the ``direct`` approach.
+        """
+        from src.agents.experiment_runner_agent import (
+            ExperimentRunnerAgent,
+            EXPERIMENTABLE_THRESHOLD,
+        )
+
+        self._progress("▶  Approach: experiment (classifying question…)")
+        experimentability = ExperimentRunnerAgent.classify_question(question)
+        if experimentability.score >= EXPERIMENTABLE_THRESHOLD:
+            self._progress(
+                f"  🔬  Question is experimentable (score={experimentability.score:.2f})"
+                f" — running experiment plan"
+            )
+            # Build the experiment agent and run it; collect its response
+            intuition = self._resolve_intuition(question, prefilled_intuition)
+            exp_agent = ExperimentRunnerAgent(
+                mcp_client=self._mcp_client,
+                backend=self._backend,
+                max_tokens=self._agent_max_tokens,
+            )
+            exp_response = exp_agent.answer(question)
+
+            # Supplement with domain agents for broader context
+            selected_domains = domains or self._select_domains(question, intuition)
+            agents = self._build_agents(selected_domains)
+            all_responses = [exp_response] + self._query_agents(agents, question)
+            return self._weighing_system.weigh(intuition, all_responses)
+        else:
+            self._progress(
+                f"  ℹ  Question not experimentable (score={experimentability.score:.2f})"
+                f" — falling back to direct"
+            )
+            return self._run_direct(
+                question, prefilled_intuition=prefilled_intuition, domains=domains
+            )
+
+    def _run_portfolio(
+        self,
+        question: str,
+        *,
+        prefilled_intuition: Optional[HumanIntuition] = None,
+        domains: Optional[list[Domain]] = None,
+    ) -> WeighingResult:
+        """Run 2–3 approaches and reconcile via the WeighingSystem.
+
+        Strategy
+        --------
+        1. Always run the ``direct`` path to get a baseline set of agent responses.
+        2. If the question is experimentable, also run the experiment agent and
+           append its response.
+        3. If the question is debate-worthy, also run the debate agents.
+        4. Pass all collected responses to the WeighingSystem in one call.
+        """
+        from src.agents.experiment_runner_agent import (
+            ExperimentRunnerAgent,
+            EXPERIMENTABLE_THRESHOLD,
+        )
+        from src.solver.router import extract_features
+
+        self._progress("▶  Approach: portfolio (multi-approach ensemble)")
+        features = extract_features(question)
+        intuition = self._resolve_intuition(question, prefilled_intuition)
+        selected_domains = domains or self._select_domains(question, intuition)
+        agents = self._build_agents(selected_domains)
+
+        all_responses = self._query_agents(agents, question)
+
+        if features.is_experimentable:
+            self._progress("  🔬  Portfolio: adding experiment agent response")
+            exp_agent = ExperimentRunnerAgent(
+                mcp_client=self._mcp_client,
+                backend=self._backend,
+                max_tokens=self._agent_max_tokens,
+            )
+            all_responses.append(exp_agent.answer(question))
+
+        if features.is_debate_worthy:
+            self._progress("  💬  Portfolio: running additional debate agents")
+            # Run a fresh set of domain agents for debate diversity
+            extra_agents = self._build_agents(selected_domains[:2])
+            all_responses.extend(self._query_agents(extra_agents, question))
+
+        return self._weighing_system.weigh(intuition, all_responses)
 
     # ------------------------------------------------------------------
     # Debate entry point — human + tool evidence + agents
