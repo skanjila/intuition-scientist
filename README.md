@@ -19,10 +19,11 @@ A multi-agent AI system that weighs **human intuition** against **domain-expert 
 5. [Domain agents](#domain-agents)
 6. [Weighing and synthesis pipeline](#weighing-and-synthesis-pipeline)
 7. [Adaptive agent loop](#adaptive-agent-loop)
-8. [Supported model backends](#supported-model-backends)
-9. [Project structure](#project-structure)
-10. [Installation](#installation)
-11. [Environment variable reference](#environment-variable-reference)
+8. [Solver policy toggle](#solver-policy-toggle)
+9. [Supported model backends](#supported-model-backends)
+10. [Project structure](#project-structure)
+11. [Installation](#installation)
+12. [Environment variable reference](#environment-variable-reference)
 
 ---
 
@@ -37,6 +38,7 @@ A multi-agent AI system that weighs **human intuition** against **domain-expert 
 | **Experiment Runner** | Classifies which questions warrant experiments, then generates a structured set of targeted experiments (hypotheses, variables, runnable Python/NumPy snippets) |
 | **Auto-intuition mode** | `--non-interactive` (or legacy `--auto-intuition`) skips the interactive prompt; the system auto-generates a human perspective via keyword heuristics + optional LLM quick-think |
 | **Adaptive agent loop** | `--adaptive-agents` starts with 3 agents and expands only when confidence is insufficient, with optional `--target-latency-ms` budget |
+| **Solver policy toggle** | `--solver-policy auto` (default) routes questions to the best approach (`direct`, `adaptive`, `debate`, `experiment`, `portfolio`) with epsilon-greedy exploration and a high-stakes safety gate |
 | **Debate harness** | Structured multi-party debate: human vs. tool evidence vs. agents |
 | **Interview coach** | Socratic FAANG interview prep with 100+ practice problems and hints |
 | **Model sweep** | Cycle across any open-source or free-tier model backends; compare results |
@@ -270,6 +272,46 @@ When `--adaptive-agents` is set, the orchestrator uses an expanding loop instead
 ```
 
 This balances thoroughness against latency: a question with a clear, confident answer in 3 domains never wastes time on 20 more.
+
+---
+
+## Solver policy toggle
+
+The **solver policy** is a meta-level toggle (introduced in `src/solver/`) that selects the execution approach used for each question.  The default policy is `auto`.
+
+### Policies
+
+| Policy | Behaviour |
+|--------|-----------|
+| `auto` | **(default)** Route by question features + small epsilon-greedy exploration (ε=0.05). High-stakes questions are never explored. |
+| `baseline` | Deterministic routing only; no exploration. Preserves pre-toggle behaviour. |
+| `explore` | Higher exploration rate (ε=0.30). Useful for discovering stronger strategies. |
+| `fixed` | Always use the approach from `--solver-approach`. |
+
+### Approaches
+
+`direct` · `adaptive` · `debate` · `experiment` · `portfolio`
+
+### Quick examples
+
+```bash
+# Default auto policy (recommended)
+python main.py --question "How does gradient descent converge?"
+
+# Force the debate approach
+python main.py -q "Pros and cons of microservices vs monolith?" \
+               --solver-policy fixed --solver-approach debate
+
+# Portfolio ensemble
+python main.py -q "Design this distributed system." \
+               --solver-policy fixed --solver-approach portfolio
+
+# Increase exploration
+python main.py -q "Which optimiser converges fastest?" \
+               --solver-policy explore --explore-epsilon 0.50
+```
+
+See [`docs/AGENT_WORKFLOWS.md#solver-policy`](docs/AGENT_WORKFLOWS.md#solver-policy--strategy-selection-toggle) for the full reference.
 
 ---
 
