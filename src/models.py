@@ -40,6 +40,13 @@ class Domain(str, Enum):
     SIGNAL_PROCESSING = "signal_processing"
     # Experiment runner (experiment-protocol and simulation agent)
     EXPERIMENT_RUNNER = "experiment_runner"
+    # Business use-case domains (proposals 1–9)
+    CUSTOMER_SUPPORT = "customer_support"
+    INCIDENT_RESPONSE = "incident_response"
+    FINANCE_RECONCILIATION = "finance_reconciliation"
+    CODE_REVIEW = "code_review"
+    ANALYTICS = "analytics"
+    RFP_RESPONSE = "rfp_response"
 
 
 @dataclass
@@ -453,3 +460,230 @@ class ModelEvaluationResult:
     models_available: int
     #: Mean intuition accuracy across available models (0–100 %)
     mean_intuition_accuracy_pct: float
+
+
+# ---------------------------------------------------------------------------
+# Business use-case result models (proposals 1–9)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class TriageResult:
+    """Customer support triage result (Proposal 1).
+
+    Produced by :meth:`AgentOrchestrator.triage`.
+    """
+
+    ticket_text: str
+    #: P1–P4 urgency label
+    urgency: str
+    #: Department / team to route the ticket to
+    routing_department: str
+    #: Draft first-response text ready to send to the customer
+    draft_response: str
+    #: Related knowledge-base article URLs (may be empty)
+    kb_articles: list[str] = field(default_factory=list)
+    #: Whether this ticket needs a human agent to step in immediately
+    escalation_flag: bool = False
+    #: Supporting reasoning from the agent ensemble
+    reasoning: str = ""
+    #: Confidence in the triage decision (0.0–1.0)
+    confidence: float = 0.5
+
+
+@dataclass
+class IncidentContext:
+    """Input context for incident-response triage (Proposal 3).
+
+    Passed to :meth:`AgentOrchestrator.respond_to_incident`.
+    """
+
+    alert_payload: str
+    log_lines: list[str] = field(default_factory=list)
+    service_graph: str = ""
+    past_incidents: list[str] = field(default_factory=list)
+
+
+@dataclass
+class IncidentResponse:
+    """Structured incident-response recommendation (Proposal 3).
+
+    Produced by :meth:`AgentOrchestrator.respond_to_incident`.
+    """
+
+    alert_payload: str
+    #: Ranked list of probable root-cause hypotheses (most likely first)
+    root_cause_hypotheses: list[str] = field(default_factory=list)
+    #: Ordered immediate mitigation steps
+    mitigation_steps: list[str] = field(default_factory=list)
+    #: Relevant runbook / wiki URLs
+    runbook_links: list[str] = field(default_factory=list)
+    #: P1 / P2 / P3 / P4
+    severity: str = "P3"
+    #: Supporting reasoning
+    reasoning: str = ""
+    confidence: float = 0.5
+
+
+@dataclass
+class ReconciliationMatch:
+    """One matched ledger-to-invoice pair (Proposal 4)."""
+
+    ledger_id: str
+    invoice_id: str
+    #: 0.0–1.0 match confidence
+    match_confidence: float
+    #: Absolute variance in the base currency
+    variance: float = 0.0
+    note: str = ""
+
+
+@dataclass
+class ReconciliationResult:
+    """Finance reconciliation output (Proposal 4).
+
+    Produced by :meth:`AgentOrchestrator.reconcile`.
+    """
+
+    matched_pairs: list[ReconciliationMatch] = field(default_factory=list)
+    unmatched_ledger_ids: list[str] = field(default_factory=list)
+    unmatched_invoice_ids: list[str] = field(default_factory=list)
+    #: Per-item anomaly scores keyed by ledger/invoice ID
+    anomaly_scores: dict[str, float] = field(default_factory=dict)
+    #: LLM-generated audit narrative
+    audit_narrative: str = ""
+    #: Suggested correcting journal entries
+    suggested_journals: list[str] = field(default_factory=list)
+    confidence: float = 0.5
+
+
+@dataclass
+class OutreachResult:
+    """Sales research & outreach result (Proposal 5).
+
+    Produced by :meth:`AgentOrchestrator.outreach`.
+    """
+
+    company_name: str
+    company_summary: str
+    pain_points: list[str] = field(default_factory=list)
+    #: Personalised email draft
+    email_draft: str = ""
+    #: MEDDIC qualification score 0–100
+    meddic_score: float = 0.0
+    discovery_questions: list[str] = field(default_factory=list)
+    competitive_notes: str = ""
+    confidence: float = 0.5
+
+
+@dataclass
+class ReportContext:
+    """Input specification for analytics report generation (Proposal 6)."""
+
+    metrics: dict[str, object]
+    kpi_targets: dict[str, object] = field(default_factory=dict)
+    reporting_period: str = ""
+    #: "exec" | "ops" | "tech"
+    audience: str = "ops"
+
+
+@dataclass
+class ReportResult:
+    """Analytics report output (Proposal 6).
+
+    Produced by :meth:`AgentOrchestrator.generate_report`.
+    """
+
+    headline: str
+    trend_analysis: str
+    anomalies: list[str] = field(default_factory=list)
+    next_actions: list[str] = field(default_factory=list)
+    chart_recommendations: list[str] = field(default_factory=list)
+    #: Suggested SQL queries for further investigation
+    sql_queries: list[str] = field(default_factory=list)
+    confidence: float = 0.5
+
+
+@dataclass
+class CodeReviewComment:
+    """One inline code-review comment (Proposal 7)."""
+
+    file_path: str
+    #: Line number (1-indexed; 0 = file-level comment)
+    line: int
+    #: critical | high | medium | low | info
+    severity: str
+    #: security | style | logic | performance | test | docs
+    category: str
+    message: str
+    suggestion: str = ""
+
+
+@dataclass
+class CodeReviewResult:
+    """Structured code-review output (Proposal 7).
+
+    Produced by :meth:`AgentOrchestrator.review_pr`.
+    """
+
+    diff_summary: str
+    comments: list[CodeReviewComment] = field(default_factory=list)
+    #: 0–100 overall risk score (higher = riskier)
+    risk_score: float = 0.0
+    security_flags: list[str] = field(default_factory=list)
+    #: "approve" | "request_changes" | "needs_review"
+    approval_recommendation: str = "needs_review"
+    overall_reasoning: str = ""
+    confidence: float = 0.5
+
+
+@dataclass
+class ExceptionEvent:
+    """Supply-chain exception input (Proposal 8)."""
+
+    #: e.g. "late_delivery" | "stockout" | "supplier_failure" | "quality_hold"
+    exception_type: str
+    sku: str
+    supplier: str
+    severity: str = "medium"
+    eta_days_late: int = 0
+    current_inventory: float = 0.0
+    cost_to_expedite: float = 0.0
+    notes: str = ""
+
+
+@dataclass
+class ExceptionResponse:
+    """Supply-chain exception management output (Proposal 8).
+
+    Produced by :meth:`AgentOrchestrator.handle_exception`.
+    """
+
+    exception_type: str
+    sku: str
+    #: "expedite" | "substitute" | "backorder" | "cancel" | "escalate"
+    recommended_action: str
+    financial_impact_estimate: float = 0.0
+    escalation_flag: bool = False
+    alternative_suppliers: list[str] = field(default_factory=list)
+    draft_po_lines: list[str] = field(default_factory=list)
+    reasoning: str = ""
+    confidence: float = 0.5
+
+
+@dataclass
+class RFPResult:
+    """RFP response drafting output (Proposal 9).
+
+    Produced by :meth:`AgentOrchestrator.draft_rfp`.
+    """
+
+    rfp_title: str
+    #: Mapping of section heading → drafted response text
+    section_drafts: dict[str, str] = field(default_factory=dict)
+    #: Mapping of requirement → "compliant" | "partial" | "non-compliant"
+    compliance_matrix: dict[str, str] = field(default_factory=dict)
+    win_themes: list[str] = field(default_factory=list)
+    risk_flags: list[str] = field(default_factory=list)
+    overall_strategy: str = ""
+    confidence: float = 0.5

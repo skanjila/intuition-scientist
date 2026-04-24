@@ -37,6 +37,11 @@ from src.llm.mock_backend import MockBackend
 from src.mcp.mcp_client import MCPClient
 from src.models import AgentResponse, Domain, SearchResult
 
+# Import ToolBackend lazily to avoid circular import; used only for type hints.
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from src.mcp.tool_backend import ToolBackend
+
 
 # ---------------------------------------------------------------------------
 # Per-domain base intuition weight (before MCP quality adjustment)
@@ -58,6 +63,9 @@ _INTUITION_HEAVY: frozenset[Domain] = frozenset({
     # reasoning; tool evidence is secondary to domain derivation.
     Domain.SIGNAL_PROCESSING,
     Domain.EXPERIMENT_RUNNER,
+    # Business use cases that lean on deep reasoning
+    Domain.ANALYTICS,
+    Domain.RFP_RESPONSE,
 })
 
 # Domains where verified external evidence is especially valuable
@@ -69,6 +77,10 @@ _TOOL_HEAVY: frozenset[Domain] = frozenset({
     Domain.FINANCE_ECONOMICS,
     Domain.CLIMATE_ENERGY,
     Domain.BIOTECH_GENOMICS,
+    # Business use cases that depend heavily on live data
+    Domain.CUSTOMER_SUPPORT,
+    Domain.INCIDENT_RESPONSE,
+    Domain.FINANCE_RECONCILIATION,
 })
 
 # Factual question signals → boost tool weight
@@ -106,11 +118,19 @@ class BaseAgent(ABC):
         mcp_client: Optional[MCPClient] = None,
         backend: Optional[LLMBackend] = None,
         max_tokens: int = 1024,
+        # Accepts any ToolBackend-conforming object as the search client so
+        # that specialised back-ends (VectorStore, CRM, ERP, …) can be swapped
+        # in for the DuckDuckGo MCPClient without touching this base class.
+        tool_backend: Optional[object] = None,
         # Deprecated parameters kept for backwards compatibility; ignored.
         llm_provider: str = "mock",
         model: Optional[str] = None,
     ) -> None:
-        self.mcp_client = mcp_client
+        # tool_backend takes precedence over mcp_client when both are supplied.
+        # This preserves 100 % backwards compatibility: callers that pass only
+        # mcp_client continue to work unchanged.
+        self.mcp_client: Optional[MCPClient] = mcp_client
+        self._tool_backend: Optional[object] = tool_backend or mcp_client
         self._backend: LLMBackend = backend if backend is not None else MockBackend()
         self._max_tokens = max_tokens
         self.llm_provider = "mock" if backend is None else "custom"
@@ -121,30 +141,42 @@ class BaseAgent(ABC):
     # Public interface
     # ------------------------------------------------------------------
 
-    def answer(self, question: str) -> AgentResponse:
+    def answer(self, question: str, *, extra_context: str = "") -> AgentResponse:
         """Produce a domain-expert answer using the dual intuition+tool pipeline.
 
         Steps
         -----
         1. **Intuition path** — call LLM with domain knowledge only (no MCP).
-        2. **Tool path** — retrieve MCP evidence, then call LLM with that
+        2. **Tool path** — retrieve MCP/tool evidence, then call LLM with that
            context.  Skipped when MCP is unavailable or returns no results.
         3. **Weight computation** — derive ``intuition_weight`` and
            ``tool_weight`` from domain type, MCP quality, and question type.
         4. **Blend** — return the answer from whichever pipeline carries more
            weight; record both weights in the ``AgentResponse``.
+
+        Parameters
+        ----------
+        question:
+            The question or task description.
+        extra_context:
+            Optional additional context to inject into the user message
+            (e.g. a code diff, metric snapshot, or document excerpt).
+            When supplied it is appended to the question in *both* pipelines.
         """
+        effective_question = f"{question}\n\n{extra_context}".strip() if extra_context else question
+
         # ── Pipeline A: Pure intuition (no MCP context) ──────────────────
-        intuition_raw = self._call_llm(question, mcp_context="")
+        intuition_raw = self._call_llm(effective_question, mcp_context="")
         intuition_data = self._extract_json(intuition_raw) or {}
 
-        # ── MCP retrieval ─────────────────────────────────────────────────
+        # ── Tool / MCP retrieval ──────────────────────────────────────────
         search_results: list[SearchResult] = []
         mcp_context = ""
-        if self.mcp_client is not None:
+        _tool = self._tool_backend  # could be MCPClient or any ToolBackend
+        if _tool is not None:
             query = f"{self.domain.value.replace('_', ' ')} {question}"
             try:
-                search_results = self.mcp_client.search(query, num_results=4)
+                search_results = _tool.search(query, num_results=4)
                 mcp_context = self._format_search_context(search_results)
             except Exception:
                 mcp_context = ""
@@ -155,12 +187,12 @@ class BaseAgent(ABC):
         # ── Pipeline B: Tool-grounded (only if weight is meaningful) ──────
         tool_data: dict = {}
         if tool_w >= 0.2 and mcp_context:
-            tool_raw = self._call_llm(question, mcp_context)
+            tool_raw = self._call_llm(effective_question, mcp_context)
             tool_data = self._extract_json(tool_raw) or {}
 
         # ── Blend and return ──────────────────────────────────────────────
         return self._blend_and_build(
-            question=question,
+            question=effective_question,
             intuition_data=intuition_data,
             tool_data=tool_data,
             intuition_weight=intuition_w,
