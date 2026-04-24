@@ -1,807 +1,340 @@
 #!/usr/bin/env python3
-"""Human Intuition Scientist — CLI entry point.
-
-Usage
------
-    python main.py                                      # non-interactive (auto-intuition, mock backend)
-    python main.py --question "..."                     # supply question non-interactively
-    python main.py --interactive                        # always prompt for human intuition
-    python main.py --interactive --question "..."       # prompt + question on CLI
-    python main.py --non-interactive                    # never prompt (same as --auto-intuition)
-    python main.py --human-policy always                # policy: always|auto|never
-    python main.py --provider ollama:llama3.1:8b        # use Ollama local model
-    python main.py --provider groq:llama-3.1-8b-instant # use Groq free-tier
-    python main.py --no-mcp                             # disable internet search
-    python main.py --domains physics cs                 # restrict to specific domains
-    python main.py --fast                               # lowest-latency preset (Ollama/Apple Silicon)
-    python main.py --adaptive-agents                    # adaptive domain expansion
-    python main.py --max-workers 2                      # custom thread-pool size
-    python main.py --auto-intuition                     # legacy alias for --non-interactive
-    python main.py --agent-timeout-seconds 15           # per-agent timeout in seconds
-    python main.py --verbose                            # show detailed per-agent progress
-    python main.py --quiet                              # suppress all progress output
-
-Default behaviour
------------------
-Running ``python main.py`` (or ``python main.py --question "..."``) is
-**non-interactive**: the system auto-generates a lightweight human intuition
-perspective and immediately queries domain agents.  No stdin prompt is shown
-unless --interactive (or --human-policy always) is passed.
-
-Supported free/open backends:  mock, ollama, llamacpp, groq, together,
-                                cloudflare, openrouter.
-Anthropic and OpenAI are NOT supported (paid/proprietary providers).
-"""
-
+"""Business, Medical & Stock Market Agent Platform — CLI"""
 from __future__ import annotations
-
 import argparse
+import json
 import sys
-from typing import Optional
-
-# ---------------------------------------------------------------------------
-# Try to import Rich for pretty output; fall back to plain print if missing
-# ---------------------------------------------------------------------------
-try:
-    from rich.console import Console
-    from rich.panel import Panel
-    from rich.table import Table
-    from rich.text import Text
-
-    _console = Console()
-
-    def _print(msg: str = "", **kw: object) -> None:
-        _console.print(msg, **kw)  # type: ignore[arg-type]
-
-    def _rule(title: str = "") -> None:
-        _console.rule(title)
-
-    HAS_RICH = True
-except ImportError:
-    HAS_RICH = False
-
-    def _print(msg: str = "", **kw: object) -> None:  # type: ignore[misc]
-        print(msg)
-
-    def _rule(title: str = "") -> None:  # type: ignore[misc]
-        print(f"\n{'='*70} {title}")
 
 
-# ---------------------------------------------------------------------------
-# Domain name mapping for CLI flags
-# ---------------------------------------------------------------------------
-from src.models import Domain, WeighingResult, WorkflowMapMode
-
-_DOMAIN_MAP: dict[str, Domain] = {
-    # Core science / engineering
-    "ee": Domain.ELECTRICAL_ENGINEERING,
-    "electrical_engineering": Domain.ELECTRICAL_ENGINEERING,
-    "cs": Domain.COMPUTER_SCIENCE,
-    "computer_science": Domain.COMPUTER_SCIENCE,
-    "nn": Domain.NEURAL_NETWORKS,
-    "neural_networks": Domain.NEURAL_NETWORKS,
-    "social": Domain.SOCIAL_SCIENCE,
-    "social_science": Domain.SOCIAL_SCIENCE,
-    "space": Domain.SPACE_SCIENCE,
-    "space_science": Domain.SPACE_SCIENCE,
-    "physics": Domain.PHYSICS,
-    "dl": Domain.DEEP_LEARNING,
-    "deep_learning": Domain.DEEP_LEARNING,
-    # High-economic-value industry domains
-    "healthcare": Domain.HEALTHCARE,
-    "climate": Domain.CLIMATE_ENERGY,
-    "climate_energy": Domain.CLIMATE_ENERGY,
-    "finance": Domain.FINANCE_ECONOMICS,
-    "finance_economics": Domain.FINANCE_ECONOMICS,
-    "economics": Domain.FINANCE_ECONOMICS,
-    "cybersecurity": Domain.CYBERSECURITY,
-    "cyber": Domain.CYBERSECURITY,
-    "biotech": Domain.BIOTECH_GENOMICS,
-    "genomics": Domain.BIOTECH_GENOMICS,
-    "biotech_genomics": Domain.BIOTECH_GENOMICS,
-    "supply_chain": Domain.SUPPLY_CHAIN,
-    "logistics": Domain.SUPPLY_CHAIN,
-    # Enterprise problem domains
-    "legal": Domain.LEGAL_COMPLIANCE,
-    "legal_compliance": Domain.LEGAL_COMPLIANCE,
-    "compliance": Domain.LEGAL_COMPLIANCE,
-    "architecture": Domain.ENTERPRISE_ARCHITECTURE,
-    "enterprise_architecture": Domain.ENTERPRISE_ARCHITECTURE,
-    "marketing": Domain.MARKETING_GROWTH,
-    "marketing_growth": Domain.MARKETING_GROWTH,
-    "growth": Domain.MARKETING_GROWTH,
-    "org": Domain.ORGANIZATIONAL_BEHAVIOR,
-    "organizational_behavior": Domain.ORGANIZATIONAL_BEHAVIOR,
-    "hr": Domain.ORGANIZATIONAL_BEHAVIOR,
-    "strategy": Domain.STRATEGY_INTELLIGENCE,
-    "strategy_intelligence": Domain.STRATEGY_INTELLIGENCE,
-    "intel": Domain.STRATEGY_INTELLIGENCE,
-    # Mastery / interview / PhD research domains
-    "algorithms": Domain.ALGORITHMS_PROGRAMMING,
-    "algo": Domain.ALGORITHMS_PROGRAMMING,
-    "algorithms_programming": Domain.ALGORITHMS_PROGRAMMING,
-    "programming": Domain.ALGORITHMS_PROGRAMMING,
-    "interview": Domain.INTERVIEW_PREP,
-    "interview_prep": Domain.INTERVIEW_PREP,
-    "faang": Domain.INTERVIEW_PREP,
-    "ee_llm": Domain.EE_LLM_RESEARCH,
-    "ee_llm_research": Domain.EE_LLM_RESEARCH,
-    "phd": Domain.EE_LLM_RESEARCH,
-    "llm_safety": Domain.EE_LLM_RESEARCH,
-    # Signal processing domain
-    "signal_processing": Domain.SIGNAL_PROCESSING,
-    "signal": Domain.SIGNAL_PROCESSING,
-    "dsp": Domain.SIGNAL_PROCESSING,
-    "filter_design": Domain.SIGNAL_PROCESSING,
-    # Experiment runner domain
-    "experiment": Domain.EXPERIMENT_RUNNER,
-    "experiment_runner": Domain.EXPERIMENT_RUNNER,
-    "experiments": Domain.EXPERIMENT_RUNNER,
-    "simulate": Domain.EXPERIMENT_RUNNER,
-}
-
-
-# ---------------------------------------------------------------------------
-# Output formatting
-# ---------------------------------------------------------------------------
-
-
-def _display_result(result: WeighingResult, workflow_mode: WorkflowMapMode = WorkflowMapMode.STANDARD) -> None:
-    """Print the WeighingResult in a human-readable format."""
-    _rule()
-    _print()
-
-    if HAS_RICH:
-        _print(Panel.fit(
-            f"[bold cyan]{result.question}[/bold cyan]",
-            title="🧪 Intuition Scientist — Results",
-        ))
-    else:
-        _print(f"RESULTS FOR: {result.question}")
-
-    # ---- Human intuition summary ----
-    _rule("Human Intuition")
-    _print(f"  Answer     : {result.human_intuition.intuitive_answer}")
-    _print(f"  Confidence : {result.human_intuition.confidence:.0%}")
-    if result.human_intuition.reasoning:
-        _print(f"  Reasoning  : {result.human_intuition.reasoning}")
-
-    # ---- Per-domain alignment table ----
-    _rule("Domain-by-Domain Alignment")
-    if HAS_RICH:
-        table = Table(show_header=True, header_style="bold magenta")
-        table.add_column("Domain", style="cyan", min_width=25)
-        table.add_column("Similarity", justify="center", min_width=12)
-        table.add_column("Agent confidence", justify="center", min_width=16)
-        table.add_column("Key agreements", min_width=30)
-
-        for align, resp in zip(result.alignment_scores, result.agent_responses):
-            sim_str = f"{align.semantic_similarity:.2f}"
-            conf_str = f"{resp.confidence:.0%}"
-            agreements = ", ".join(align.key_agreements[:3]) or "—"
-            table.add_row(
-                align.domain.value.replace("_", " ").title(),
-                sim_str,
-                conf_str,
-                agreements,
-            )
-        _console.print(table)
-    else:
-        for align, resp in zip(result.alignment_scores, result.agent_responses):
-            _print(
-                f"  {align.domain.value:<30} "
-                f"similarity={align.semantic_similarity:.2f}  "
-                f"agent_conf={resp.confidence:.0%}"
-            )
-
-    # ---- Agent answers ----
-    _rule("Expert Agent Answers")
-    for resp in result.agent_responses:
-        _print(f"\n[{resp.domain.value.replace('_', ' ').title()}]")
-        _print(f"  {resp.answer[:400]}")
-        if resp.reasoning:
-            _print(f"  Reasoning: {resp.reasoning[:200]}")
-
-    # ---- Synthesized answer ----
-    _rule("Synthesized Answer")
-    _print(result.synthesized_answer)
-
-    # ---- Overall analysis ----
-    _rule("Deep Analysis")
-    _print(result.overall_analysis)
-
-    # ---- Intuition accuracy ----
-    pct = result.intuition_accuracy_pct
-    _rule("Intuition Accuracy Score")
-    if HAS_RICH:
-        colour = "green" if pct >= 70 else ("yellow" if pct >= 40 else "red")
-        _print(f"  [{colour}]{pct:.1f}%[/{colour}]  (weighted alignment across all domain experts)")
-    else:
-        _print(f"  {pct:.1f}%  (weighted alignment across all domain experts)")
-
-    # ---- Recommendations ----
-    _rule("Recommendations")
-    for i, rec in enumerate(result.recommendations, 1):
-        _print(f"  {i}. {rec}")
-
-    # ---- Workflow map (configurable verbosity) ----
-    if workflow_mode is not WorkflowMapMode.OFF:
-        from src.workflow import build_workflow_trace, render_workflow
-
-        _use_mcp = any(r.mcp_context for r in result.agent_responses)
-        trace = build_workflow_trace(result, use_mcp=_use_mcp)
-        workflow_text = render_workflow(trace, workflow_mode)
-        if workflow_text:
-            _rule("Agentic Workflow")
-            _print(workflow_text)
-
-    _rule()
-    _print()
-
-
-# ---------------------------------------------------------------------------
-# CLI argument parsing
-# ---------------------------------------------------------------------------
-
-
-def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        prog="intuition-scientist",
-        description=(
-            "Human Intuition Scientist: test your intuition against domain experts.\n\n"
-            "Default mode is non-interactive (auto-intuition). "
-            "Add --interactive to be prompted for your intuition."
-        ),
-    )
-    parser.add_argument(
-        "--question", "-q",
-        default=None,
-        help="Question to investigate (prompted interactively if omitted).",
-    )
-    parser.add_argument(
-        "--provider",
-        default="mock",
-        metavar="SPEC",
-        help=(
-            "Backend provider spec. Supported free/open backends: "
-            "mock (default), ollama:<model>, llamacpp:<path>, "
-            "groq:<model>, together:<model>, "
-            "cloudflare:<model>, openrouter:<model>. "
-            "Anthropic and OpenAI are not supported."
-        ),
-    )
-    parser.add_argument(
-        "--model",
-        default=None,
-        help=(
-            "Model name (shorthand: equivalent to --provider <provider>:<model>). "
-            "Ignored when --provider already contains a model suffix."
-        ),
-    )
-    parser.add_argument(
-        "--no-mcp",
-        action="store_true",
-        default=False,
-        help="Disable internet search via MCP.",
-    )
-    parser.add_argument(
-        "--use-mcp",
-        action="store_true",
-        default=False,
-        help=(
-            "Explicitly enable MCP internet search. "
-            "Use this to override the --fast preset which disables MCP by default."
-        ),
+def _make_orch(args):
+    from src.orchestrator.business_orchestrator import BusinessOrchestrator
+    return BusinessOrchestrator(
+        backend_spec=getattr(args, "model", "") or "",
+        model_profile=getattr(args, "profile", "balanced") or "balanced",
+        verbose=getattr(args, "verbose", False),
     )
 
-    # ------------------------------------------------------------------
-    # Human involvement policy flags
-    # ------------------------------------------------------------------
-    interaction_group = parser.add_mutually_exclusive_group()
-    interaction_group.add_argument(
-        "--interactive",
-        action="store_true",
-        default=False,
-        help=(
-            "Always prompt for human intuition interactively. "
-            "Overrides the default non-interactive (auto-intuition) mode."
-        ),
-    )
-    interaction_group.add_argument(
-        "--non-interactive",
-        action="store_true",
-        default=False,
-        help=(
-            "Never prompt; always use auto-generated intuition. "
-            "Equivalent to --human-policy never. "
-            "Also implied by --auto-intuition (legacy flag)."
-        ),
-    )
-    interaction_group.add_argument(
-        "--auto-intuition",
-        action="store_true",
-        default=False,
-        help=(
-            "Legacy alias for --non-interactive. "
-            "Skip the interactive human-intuition prompt; "
-            "the system auto-generates a lightweight intuition response instead. "
-            "This is now the default — use --interactive to force prompting."
-        ),
-    )
-    parser.add_argument(
-        "--human-policy",
-        default=None,
-        choices=["auto", "always", "never"],
-        metavar="POLICY",
-        help=(
-            "Human involvement policy. "
-            "auto (default): prompt only when escalation is triggered "
-            "(high-stakes domain, low confidence, high disagreement, or MCP missing). "
-            "always: always prompt interactively (same as --interactive). "
-            "never: never prompt (same as --non-interactive). "
-            "When --interactive or --non-interactive is given, this flag is ignored."
-        ),
-    )
 
-    parser.add_argument(
-        "--adaptive-agents",
-        action="store_true",
-        default=False,
-        help=(
-            "Enable the evolving adaptive agent-selection loop. "
-            "Instead of querying a fixed set of domain agents the orchestrator "
-            "starts with the 3 most relevant agents and expands only if "
-            "confidence/coverage is insufficient. "
-            "Use together with --target-latency-ms to cap wall-clock expansion time. "
-            "Default (fixed domain set) is unchanged unless this flag is supplied."
-        ),
-    )
-    parser.add_argument(
-        "--target-latency-ms",
-        type=int,
-        default=None,
-        metavar="MS",
-        help=(
-            "Wall-clock budget in milliseconds for the adaptive agent loop "
-            "(--adaptive-agents). The loop stops expanding when this limit is "
-            "exceeded even if the confidence threshold has not been reached. "
-            "Ignored when --adaptive-agents is not set."
-        ),
-    )
-    parser.add_argument(
-        "--domains",
-        nargs="+",
-        default=None,
-        metavar="DOMAIN",
-        help=(
-            "Restrict to specific domains: "
-            "ee, cs, nn, social, space, physics, dl "
-            "(default: auto-detect from question)."
-        ),
-    )
-    parser.add_argument(
-        "--max-domains",
-        type=int,
-        default=None,
-        metavar="N",
-        help="Maximum number of domain agents to query.",
-    )
-    parser.add_argument(
-        "--max-workers",
-        type=int,
-        default=None,
-        metavar="N",
-        help=(
-            "Orchestrator thread-pool size for parallel agent calls "
-            "(default: 7, or 1 when --fast is set). "
-            "For local Ollama on Apple Silicon, 1–2 typically gives lowest latency."
-        ),
-    )
-    parser.add_argument(
-        "--fast",
-        action="store_true",
-        default=False,
-        help=(
-            "Enable low-latency preset optimized for local Ollama on Apple Silicon. "
-            "Sets: --max-workers 1, --max-domains 3, --no-mcp, "
-            "--agent-max-tokens 256, --synthesis-max-tokens 384. "
-            "Any of these can be overridden by supplying the flag explicitly."
-        ),
-    )
-    parser.add_argument(
-        "--agent-max-tokens",
-        type=int,
-        default=None,
-        metavar="N",
-        help=(
-            "Token budget for each per-agent LLM call "
-            "(default: 1024, or 256 when --fast is set)."
-        ),
-    )
-    parser.add_argument(
-        "--synthesis-max-tokens",
-        type=int,
-        default=None,
-        metavar="N",
-        help=(
-            "Token budget for synthesis and deep-analysis LLM calls "
-            "(default: 512, or 384 when --fast is set)."
-        ),
-    )
-    parser.add_argument(
-        "--workflow-map",
-        default="standard",
-        choices=["off", "compact", "standard", "deep"],
-        metavar="MODE",
-        help=(
-            "Verbosity of the agentic workflow map appended to each answer. "
-            "Choices: off, compact, standard (default), deep. "
-            "'deep' includes a Mermaid diagram, inputs & context, assumptions, "
-            "plan, tool-call plan & results, intermediate artifacts, and next actions."
-        ),
-    )
-    parser.add_argument(
-        "--explain-workflow",
-        action="store_const",
-        const="deep",
-        dest="workflow_map",
-        help="Alias for --workflow-map deep.",
-    )
-    parser.add_argument(
-        "--agent-timeout-seconds",
-        type=float,
-        default=30.0,
-        metavar="SECS",
-        help=(
-            "Maximum seconds to wait for each agent response before timing out "
-            "(default: 30.0). Timed-out agents return a low-confidence placeholder "
-            "response instead of blocking the run indefinitely. "
-            "Use a smaller value (e.g. 10) for faster feedback in CI."
-        ),
-    )
-
-    # ------------------------------------------------------------------
-    # Solver policy flags
-    # ------------------------------------------------------------------
-    solver_group = parser.add_argument_group(
-        "solver policy",
-        "Control the strategy-selection policy used to pick an execution approach.",
-    )
-    solver_group.add_argument(
-        "--solver-policy",
-        default="auto",
-        choices=["auto", "baseline", "explore", "fixed"],
-        metavar="POLICY",
-        help=(
-            "Solver-selection policy. "
-            "auto (default): route deterministically from question features with "
-            "small epsilon-greedy exploration (ε=0.05); exploration is disabled "
-            "for high-stakes questions. "
-            "baseline: deterministic routing, no exploration (preserves existing "
-            "behaviour). "
-            "explore: increase exploration (ε=0.30) to discover stronger strategies. "
-            "fixed: always use the approach specified by --solver-approach."
-        ),
-    )
-    solver_group.add_argument(
-        "--solver-approach",
-        default="direct",
-        choices=["direct", "adaptive", "debate", "experiment", "portfolio"],
-        metavar="APPROACH",
-        help=(
-            "Approach to use when --solver-policy=fixed. "
-            "direct (default): standard non-adaptive pipeline. "
-            "adaptive: force the adaptive agent-expansion loop. "
-            "debate: structured multi-party debate. "
-            "experiment: ExperimentRunnerAgent classification + plan. "
-            "portfolio: run 2-3 approaches and reconcile with WeighingSystem."
-        ),
-    )
-    solver_group.add_argument(
-        "--explore-epsilon",
-        type=float,
-        default=None,
-        metavar="ε",
-        help=(
-            "Epsilon for epsilon-greedy exploration in auto/explore policies "
-            "(0.0–1.0). Defaults: 0.05 for auto, 0.30 for explore. "
-            "Override with this flag."
-        ),
-    )
-    solver_group.add_argument(
-        "--explore-topk",
-        type=int,
-        default=3,
-        metavar="K",
-        help=(
-            "Number of top-scoring approaches to sample from during exploration "
-            "(default: 3). Larger values allow more diverse sampling."
-        ),
-    )
-    solver_group.add_argument(
-        "--no-explore-high-stakes",
-        action="store_true",
-        default=True,
-        dest="no_explore_high_stakes",
-        help=(
-            "Disable exploration for questions that contain high-stakes signals "
-            "(legal, medical, financial, security keywords). Default: enabled. "
-            "Pass --explore-high-stakes to allow exploration even on high-stakes "
-            "questions."
-        ),
-    )
-    solver_group.add_argument(
-        "--explore-high-stakes",
-        action="store_false",
-        dest="no_explore_high_stakes",
-        help="Allow exploration even when high-stakes signals are detected.",
-    )
-
-    # ------------------------------------------------------------------
-    # Verbosity flags
-    # ------------------------------------------------------------------
-    verbosity_group = parser.add_mutually_exclusive_group()
-    verbosity_group.add_argument(
-        "--verbose", "-v",
-        action="store_true",
-        default=False,
-        help=(
-            "Show detailed per-agent progress (domain selection, agent start/finish, "
-            "MCP status, pipeline used). Default is user-friendly progress output."
-        ),
-    )
-    verbosity_group.add_argument(
-        "--quiet",
-        action="store_true",
-        default=False,
-        help="Suppress all progress output; only print the final result.",
-    )
-
-    return parser
+def _autonomy(args):
+    from src.models import AutonomyLevel
+    val = getattr(args, "autonomy", None)
+    if val:
+        return AutonomyLevel(val)
+    return None
 
 
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
+def cmd_demo(args):
+    """Run mock demos of all 18 use cases."""
+    from src.llm.mock_backend import MockBackend
+    from src.orchestrator.business_orchestrator import BusinessOrchestrator
+    from src.models import (
+        IncidentContext, ReportContext, ExceptionEvent, ClinicalAssessmentInput,
+        PatientRiskInput, StockPredictionInput,
+    )
+    orch = BusinessOrchestrator(backend=MockBackend())
+    demos = [
+        ("triage", lambda: orch.triage("Payment API returning 500 for all enterprise users")),
+        ("compliance_qa", lambda: orch.compliance_qa("Do we need to delete user data under GDPR on account closure?")),
+        ("incident", lambda: orch.respond_to_incident(IncidentContext(alert_payload="[P1] api-gateway 503 45%", log_lines=["ERROR: timeout"]))),
+        ("reconcile", lambda: orch.reconcile([{"id":"L1","amount":1000}], [{"id":"I1","amount":1000}])),
+        ("outreach", lambda: orch.outreach("Acme Corp", "DataPlatform", 100_000)),
+        ("report", lambda: orch.generate_report(ReportContext(metrics={"revenue": 4_200_000}, kpi_targets={"revenue": 4_000_000}))),
+        ("review_pr", lambda: orch.review_pr("def login(u,p): return db.query(u,p)", "Add login")),
+        ("exception", lambda: orch.handle_exception(ExceptionEvent("late_delivery","SKU-1","SupplierA",eta_days_late=10,cost_to_expedite=5000))),
+        ("draft_rfp", lambda: orch.draft_rfp("Vendor must provide 99.99% uptime.", "Cloud Platform RFP")),
+        ("clinical_decision", lambda: orch.clinical_decision(ClinicalAssessmentInput("45F chest pain", symptoms=["chest pain"]))),
+        ("drug_interactions", lambda: orch.check_drug_interactions(["warfarin","aspirin","ibuprofen"])),
+        ("literature", lambda: orch.synthesize_literature("GLP-1 agonists cardiovascular outcomes")),
+        ("patient_risk", lambda: orch.stratify_patient_risk(PatientRiskInput("P001", 75, ["diabetes","hypertension","CKD"]))),
+        ("healthcare_gaps", lambda: orch.analyze_healthcare_gaps("rural Appalachia")),
+        ("genomic_risk", lambda: orch.assess_genomic_risk("S001", ["BRCA1:c.5266dupC"])),
+        ("mental_health", lambda: orch.triage_mental_health("panic attacks daily, not sleeping")),
+        ("clinical_trials", lambda: orch.match_clinical_trials(PatientRiskInput("P002", 45, ["breast cancer"]), "HER2+ breast cancer")),
+        ("stock", lambda: orch.predict_stock(StockPredictionInput("NVDA", "1m"))),
+    ]
+    for name, fn in demos:
+        try:
+            result = fn()
+            print(f"✓ {name}: {type(result).__name__}")
+        except Exception as e:
+            print(f"✗ {name}: {e}")
 
 
-def main(argv: Optional[list[str]] = None) -> None:
-    parser = _build_parser()
-    args = parser.parse_args(argv)
+def cmd_models(args):
+    from src.llm.model_registry import list_free_models
+    models = list_free_models()
+    print(f"{'Spec':<55} {'Profile':<12} {'Tier':<12} {'Context':<10}")
+    print("-" * 90)
+    for m in models:
+        spec = f"{m.provider}:{m.model_id}"
+        print(f"{spec:<55} {m.profile.value:<12} {m.cost_tier.value:<12} {m.context_window_k}k")
 
-    # Build the backend spec
-    backend_spec = args.provider
-    # If --model is given and --provider has no colon (i.e. is just a provider
-    # name without a model suffix), combine them.
-    if args.model and ":" not in backend_spec:
-        backend_spec = f"{backend_spec}:{args.model}"
 
-    # Validate: reject Anthropic/OpenAI early with a helpful error
-    from src.llm.registry import get_backend as _get_backend, _BLOCKED_PROVIDERS
-    provider_name = backend_spec.split(":")[0].lower()
-    if provider_name in _BLOCKED_PROVIDERS:
-        _print(
-            f"[red]Error: {_BLOCKED_PROVIDERS[provider_name]}[/red]"
-            if HAS_RICH
-            else f"Error: {_BLOCKED_PROVIDERS[provider_name]}"
-        )
+def cmd_serve(args):
+    try:
+        import uvicorn
+    except ImportError:
+        print("ERROR: uvicorn not installed. Run: pip install fastapi uvicorn", file=sys.stderr)
         sys.exit(1)
+    host = getattr(args, "host", "0.0.0.0")
+    port = getattr(args, "port", 8080)
+    uvicorn.run("src.api.server:app", host=host, port=port, reload=False)
 
-    # ------------------------------------------------------------------
-    # Apply --fast preset (each value can be overridden by explicit flag)
-    # ------------------------------------------------------------------
-    if args.fast:
-        max_workers: int = args.max_workers if args.max_workers is not None else 1
-        max_domains: Optional[int] = (
-            args.max_domains if args.max_domains is not None else 3
-        )
-        agent_max_tokens: int = (
-            args.agent_max_tokens if args.agent_max_tokens is not None else 256
-        )
-        synthesis_max_tokens: int = (
-            args.synthesis_max_tokens if args.synthesis_max_tokens is not None else 384
-        )
-        # MCP: disabled by fast preset unless --use-mcp is explicitly given
-        use_mcp: bool = args.use_mcp and not args.no_mcp
+
+def cmd_triage(args):
+    orch = _make_orch(args)
+    r = orch.triage(args.ticket, autonomy=_autonomy(args) or __import__("src.models", fromlist=["AutonomyLevel"]).AutonomyLevel.AI_PROPOSES)
+    print(f"Urgency: {r.urgency} | Department: {r.routing_department}")
+    print(f"Escalate: {r.escalation.needs_escalation} ({r.escalation.reason})")
+    print(f"\nDraft Response:\n{r.draft_response}")
+
+
+def cmd_incident(args):
+    from src.models import IncidentContext
+    orch = _make_orch(args)
+    ctx = IncidentContext(alert_payload=args.alert)
+    r = orch.respond_to_incident(ctx)
+    print(f"Severity: {r.severity}")
+    print(f"Root causes: {r.root_cause_hypotheses}")
+    print(f"Steps: {r.mitigation_steps}")
+
+
+def cmd_compliance(args):
+    orch = _make_orch(args)
+    r = orch.compliance_qa(args.question)
+    print(f"Answer: {r.answer}")
+    print(f"Escalate: {r.escalation.needs_escalation}")
+
+
+def cmd_reconcile(args):
+    orch = _make_orch(args)
+    ledger = [{"id":"L1","amount":1000},{"id":"L2","amount":500}]
+    invoices = [{"id":"I1","amount":1000},{"id":"I2","amount":502}]
+    r = orch.reconcile(ledger, invoices)
+    print(f"Matched: {len(r.matched_pairs)} pairs")
+    print(f"Audit: {r.audit_narrative[:200]}")
+
+
+def cmd_report(args):
+    from src.models import ReportContext
+    metrics = json.loads(args.metrics) if args.metrics else {"revenue": 1_000_000}
+    orch = _make_orch(args)
+    ctx = ReportContext(metrics=metrics)
+    r = orch.generate_report(ctx)
+    print(f"Headline: {r.headline}")
+    if r.anomalies:
+        print(f"Anomalies: {r.anomalies}")
+
+
+def cmd_review(args):
+    orch = _make_orch(args)
+    r = orch.review_pr(args.diff)
+    print(f"Risk: {r.risk_score:.2f} | Recommendation: {r.approval_recommendation}")
+    print(f"Reasoning: {r.overall_reasoning[:300]}")
+
+
+def cmd_exception(args):
+    from src.models import ExceptionEvent
+    orch = _make_orch(args)
+    evt = ExceptionEvent(exception_type="late_delivery", sku=args.sku, supplier=args.supplier, eta_days_late=args.days_late)
+    r = orch.handle_exception(evt)
+    print(f"Action: {r.recommended_action}")
+    print(f"Reasoning: {r.reasoning[:200]}")
+
+
+def cmd_rfp(args):
+    orch = _make_orch(args)
+    r = orch.draft_rfp(args.text, args.title)
+    print(f"Risk flags: {r.risk_flags}")
+    print(f"Strategy: {r.overall_strategy[:200]}")
+
+
+def cmd_outreach(args):
+    orch = _make_orch(args)
+    r = orch.outreach(args.company, getattr(args, "product", ""))
+    print(f"Company: {r.company_name}")
+    print(f"Email draft: {r.email_draft[:300]}")
+
+
+def cmd_clinical(args):
+    from src.models import ClinicalAssessmentInput
+    orch = _make_orch(args)
+    symptoms = [s.strip() for s in args.symptoms.split(",")] if args.symptoms else []
+    a = ClinicalAssessmentInput(patient_summary=args.symptoms or "Patient assessment", symptoms=symptoms)
+    r = orch.clinical_decision(a)
+    print(f"Escalate: {r.escalation.needs_escalation} ({r.escalation.urgency})")
+    print(f"Differential: {r.differential_diagnoses}")
+    print(f"Red flags: {r.red_flags}")
+
+
+def cmd_drugs(args):
+    orch = _make_orch(args)
+    meds = [m.strip() for m in args.medications.split(",")]
+    r = orch.check_drug_interactions(meds)
+    print(f"Severity summary: {r.severity_summary[:300]}")
+
+
+def cmd_literature(args):
+    orch = _make_orch(args)
+    r = orch.synthesize_literature(args.query)
+    print(f"Synthesis: {r.synthesis[:400]}")
+
+
+def cmd_risk(args):
+    from src.models import PatientRiskInput
+    orch = _make_orch(args)
+    diags = [d.strip() for d in args.diagnoses.split(",")] if args.diagnoses else []
+    p = PatientRiskInput(patient_id=args.patient_id, age=args.age, diagnoses=diags)
+    r = orch.stratify_patient_risk(p)
+    print(f"Risk level: {r.risk_level}")
+    print(f"Interventions: {r.recommended_interventions}")
+
+
+def cmd_gaps(args):
+    orch = _make_orch(args)
+    r = orch.analyze_healthcare_gaps(args.population)
+    print(f"Gaps: {r.identified_gaps}")
+
+
+def cmd_genomics(args):
+    orch = _make_orch(args)
+    variants = [v.strip() for v in args.variants.split(",")]
+    r = orch.assess_genomic_risk(args.sample_id, variants)
+    print(f"Counseling needed: {r.genetic_counseling_needed}")
+    print(f"Screenings: {r.recommended_screenings}")
+
+
+def cmd_mental(args):
+    orch = _make_orch(args)
+    r = orch.triage_mental_health(args.concerns)
+    print(f"Risk level: {r.risk_level}")
+    print(f"Crisis indicators: {r.crisis_indicators}")
+    print(f"Resources: {r.recommended_resources}")
+
+
+def cmd_trials(args):
+    from src.models import PatientRiskInput
+    orch = _make_orch(args)
+    diags = [d.strip() for d in args.diagnoses.split(",")] if hasattr(args, "diagnoses") and args.diagnoses else []
+    p = PatientRiskInput(patient_id=args.patient_id, age=args.age, diagnoses=diags)
+    r = orch.match_clinical_trials(p, getattr(args, "condition", ""))
+    print(f"Matched trials: {len(r.matched_trials)}")
+    for t in r.matched_trials:
+        print(f"  - {t.trial_id}: {t.title[:60]} ({t.eligibility_match})")
+
+
+def cmd_stock(args):
+    from src.models import StockPredictionInput
+    orch = _make_orch(args)
+    headlines = [args.headline] if getattr(args, "headline", None) else []
+    inp = StockPredictionInput(ticker=args.ticker, horizon=getattr(args, "horizon", "1m"), news_headlines=headlines)
+    r = orch.predict_stock(inp)
+    print(f"{r.ticker} ({r.direction.upper()}) — confidence: {r.confidence_pct:.1f}%")
+    print(f"Thesis: {r.thesis[:300]}")
+    print(f"Position sizing: {r.suggested_position_sizing}")
+    print(f"\n⚠ {r.disclaimer}")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Business Agent Platform CLI")
+    parser.add_argument("--model", default="", help="Backend spec e.g. ollama:llama3.1:8b")
+    parser.add_argument("--profile", default="balanced", choices=["fast","balanced","quality"])
+    parser.add_argument("--autonomy", default=None, choices=["full_auto","ai_proposes","ai_assists","human_first"])
+    parser.add_argument("--verbose", action="store_true")
+
+    sub = parser.add_subparsers(dest="command")
+
+    sub.add_parser("demo")
+    sub.add_parser("models")
+
+    p_serve = sub.add_parser("serve")
+    p_serve.add_argument("--host", default="0.0.0.0")
+    p_serve.add_argument("--port", type=int, default=8080)
+
+    p_triage = sub.add_parser("triage")
+    p_triage.add_argument("--ticket", required=True)
+
+    p_incident = sub.add_parser("incident")
+    p_incident.add_argument("--alert", required=True)
+
+    p_compliance = sub.add_parser("compliance")
+    p_compliance.add_argument("--question", required=True)
+
+    sub.add_parser("reconcile")
+
+    p_report = sub.add_parser("report")
+    p_report.add_argument("--metrics", default=None)
+
+    p_review = sub.add_parser("review")
+    p_review.add_argument("--diff", required=True)
+
+    p_exception = sub.add_parser("exception")
+    p_exception.add_argument("--sku", required=True)
+    p_exception.add_argument("--supplier", required=True)
+    p_exception.add_argument("--days-late", type=int, default=0, dest="days_late")
+
+    p_rfp = sub.add_parser("rfp")
+    p_rfp.add_argument("--title", default="")
+    p_rfp.add_argument("--text", required=True)
+
+    p_outreach = sub.add_parser("outreach")
+    p_outreach.add_argument("--company", required=True)
+    p_outreach.add_argument("--product", default="")
+
+    p_clinical = sub.add_parser("clinical")
+    p_clinical.add_argument("--symptoms", default="")
+
+    p_drugs = sub.add_parser("drugs")
+    p_drugs.add_argument("--medications", required=True)
+
+    p_lit = sub.add_parser("literature")
+    p_lit.add_argument("--query", required=True)
+
+    p_risk = sub.add_parser("risk")
+    p_risk.add_argument("--patient-id", default="P001", dest="patient_id")
+    p_risk.add_argument("--age", type=int, default=50)
+    p_risk.add_argument("--diagnoses", default="")
+
+    p_gaps = sub.add_parser("gaps")
+    p_gaps.add_argument("--population", required=True)
+
+    p_genomics = sub.add_parser("genomics")
+    p_genomics.add_argument("--sample-id", required=True, dest="sample_id")
+    p_genomics.add_argument("--variants", required=True)
+
+    p_mental = sub.add_parser("mental")
+    p_mental.add_argument("--concerns", required=True)
+
+    p_trials = sub.add_parser("trials")
+    p_trials.add_argument("--patient-id", default="P001", dest="patient_id")
+    p_trials.add_argument("--age", type=int, default=45)
+    p_trials.add_argument("--diagnoses", default="")
+    p_trials.add_argument("--condition", default="")
+
+    p_stock = sub.add_parser("stock")
+    p_stock.add_argument("--ticker", required=True)
+    p_stock.add_argument("--horizon", default="1m")
+    p_stock.add_argument("--headline", default=None)
+
+    args = parser.parse_args()
+    if args.command is None:
+        parser.print_help()
+        return
+
+    dispatch = {
+        "demo": cmd_demo, "models": cmd_models, "serve": cmd_serve,
+        "triage": cmd_triage, "incident": cmd_incident, "compliance": cmd_compliance,
+        "reconcile": cmd_reconcile, "report": cmd_report, "review": cmd_review,
+        "exception": cmd_exception, "rfp": cmd_rfp, "outreach": cmd_outreach,
+        "clinical": cmd_clinical, "drugs": cmd_drugs, "literature": cmd_literature,
+        "risk": cmd_risk, "gaps": cmd_gaps, "genomics": cmd_genomics,
+        "mental": cmd_mental, "trials": cmd_trials, "stock": cmd_stock,
+    }
+    fn = dispatch.get(args.command)
+    if fn:
+        fn(args)
     else:
-        max_workers = args.max_workers if args.max_workers is not None else 7
-        max_domains = args.max_domains
-        agent_max_tokens = (
-            args.agent_max_tokens if args.agent_max_tokens is not None else 1024
-        )
-        synthesis_max_tokens = (
-            args.synthesis_max_tokens if args.synthesis_max_tokens is not None else 512
-        )
-        use_mcp = not args.no_mcp
-
-    # Parse domain overrides
-    domains = None
-    if args.domains:
-        domains = []
-        for d in args.domains:
-            key = d.lower()
-            if key in _DOMAIN_MAP:
-                domains.append(_DOMAIN_MAP[key])
-            else:
-                _print(f"Unknown domain '{d}'. Choices: {', '.join(_DOMAIN_MAP)}")
-                sys.exit(1)
-
-    # ------------------------------------------------------------------
-    # Resolve the human-involvement policy
-    # ------------------------------------------------------------------
-    from src.intuition.human_policy import HumanPolicy, decide_interactive
-
-    if args.interactive:
-        policy = HumanPolicy.ALWAYS
-    elif args.non_interactive or args.auto_intuition:
-        policy = HumanPolicy.NEVER
-    elif args.human_policy is not None:
-        policy = HumanPolicy(args.human_policy)
-    else:
-        # Default: AUTO — non-interactive unless an escalation trigger fires.
-        # For the initial intuition capture we don't yet have agent responses,
-        # so only the domain-level trigger (high-stakes domain) can apply here.
-        # The post-run escalation check below covers confidence/disagreement.
-        policy = HumanPolicy.AUTO
-
-    # ------------------------------------------------------------------
-    # Other feature flags
-    # ------------------------------------------------------------------
-    adaptive_agents: bool = args.adaptive_agents
-    target_latency_ms: Optional[int] = args.target_latency_ms
-    agent_timeout_seconds: float = args.agent_timeout_seconds
-    verbose: bool = args.verbose
-    quiet: bool = args.quiet
-
-    # ------------------------------------------------------------------
-    # Solver policy flags
-    # ------------------------------------------------------------------
-    from src.solver import SolverApproach, SolverPolicy, StrategyRouter
-
-    solver_policy = SolverPolicy(args.solver_policy)
-    solver_approach = SolverApproach(args.solver_approach)
-    no_explore_high_stakes: bool = args.no_explore_high_stakes
-
-    # Build epsilon values: CLI override takes precedence over per-policy defaults
-    _auto_epsilon: float = args.explore_epsilon if args.explore_epsilon is not None else 0.05
-    _explore_epsilon: float = args.explore_epsilon if args.explore_epsilon is not None else 0.30
-
-    router = StrategyRouter(
-        policy=solver_policy,
-        forced_approach=solver_approach,
-        auto_epsilon=_auto_epsilon,
-        explore_epsilon=_explore_epsilon,
-        explore_topk=args.explore_topk,
-        no_explore_high_stakes=no_explore_high_stakes,
-    )
-
-    # ------------------------------------------------------------------
-    # Progress callback
-    # ------------------------------------------------------------------
-    # In quiet mode: suppress all progress; in normal/verbose mode: print.
-    # Verbose mode uses the same callback but the orchestrator emits more.
-    def _progress(msg: str) -> None:
-        if not quiet:
-            _print(msg)
-
-    # Get question
-    question = args.question
-    if not question:
-        _print()
-        _print("=" * 70 if not HAS_RICH else "[bold]" + "=" * 70 + "[/bold]")
-        _print("🧪  Welcome to the Human Intuition Scientist")
-        _print("=" * 70 if not HAS_RICH else "[bold]" + "=" * 70 + "[/bold]")
-        question = input("\nEnter your question: ").strip()
-        if not question:
-            _print("No question provided. Exiting.")
-            sys.exit(0)
-
-    # ------------------------------------------------------------------
-    # Determine auto_intuition based on resolved policy
-    # (pre-run domain check for AUTO policy)
-    # ------------------------------------------------------------------
-    # For AUTO policy, check if the question touches high-stakes domains.
-    # We do a quick domain inference here to decide before running agents.
-    if policy == HumanPolicy.AUTO:
-        from src.intuition.human_intuition import IntuitionCapture
-        from src.intuition.human_policy import should_escalate
-        # Use scored-only domain inference: only domains with actual keyword
-        # hits count for escalation.  Using the full infer_domains() would
-        # include ALL domains as a fallback for unrecognised questions (e.g.
-        # "What is 2+2?"), incorrectly triggering high-stakes escalation.
-        scored_domains = (
-            domains if domains is not None
-            else IntuitionCapture.infer_scored_domains(question)
-        )
-        pre_run_interactive = should_escalate(scored_domains, responses=None, use_mcp=use_mcp)
-    else:
-        pre_run_interactive = decide_interactive(policy, domains or [], use_mcp=use_mcp)
-
-    auto_intuition: bool = not pre_run_interactive
-
-    # Inform the user of the active mode
-    if not quiet:
-        if auto_intuition:
-            _print(
-                "\n🤖  Auto-intuition mode: generating human perspective automatically…\n"
-                if not HAS_RICH
-                else "\n[bold cyan]🤖  Auto-intuition mode: generating human perspective automatically…[/bold cyan]\n"
-            )
-        else:
-            _print(
-                "\n🧠  Interactive mode: you will be prompted for your intuition.\n"
-                if not HAS_RICH
-                else "\n[bold cyan]🧠  Interactive mode: you will be prompted for your intuition.[/bold cyan]\n"
-            )
-
-    # When --adaptive-agents is active, let the user know the loop is running.
-    if adaptive_agents and not quiet:
-        _print(
-            "🔄  Adaptive agent loop enabled — will expand domains as needed.\n"
-            if not HAS_RICH
-            else "[bold cyan]🔄  Adaptive agent loop enabled — will expand domains as needed.[/bold cyan]\n"
-        )
-
-    # Import here to keep startup fast when --help is used
-    from src.orchestrator.agent_orchestrator import AgentOrchestrator
-
-    # ------------------------------------------------------------------
-    # Run solver — select approach via policy, then dispatch
-    # ------------------------------------------------------------------
-    selection = router.select(question)
-
-    if not quiet:
-        _print(
-            f"\n🎯  Solver policy: {solver_policy.value} | "
-            f"approach: {selection.approach.value}"
-            + (" [explored]" if selection.explored else "")
-            + (" [high-stakes gate]" if selection.high_stakes_gate else "")
-            + "\n"
-            if not HAS_RICH
-            else (
-                f"\n[bold magenta]🎯  Solver policy: {solver_policy.value}[/bold magenta] | "
-                f"[cyan]approach: {selection.approach.value}[/cyan]"
-                + (" [yellow][explored][/yellow]" if selection.explored else "")
-                + (" [red][high-stakes gate][/red]" if selection.high_stakes_gate else "")
-                + "\n"
-            )
-        )
-
-    # When the solver policy selects adaptive (or the legacy --adaptive-agents
-    # flag was passed) override the orchestrator flag so it is honoured.
-    _use_adaptive = adaptive_agents or (selection.approach.value == "adaptive")
-
-    with AgentOrchestrator(
-        backend_spec=backend_spec,
-        use_mcp=use_mcp,
-        max_workers=max_workers,
-        max_domains=max_domains,
-        agent_max_tokens=agent_max_tokens,
-        synthesis_max_tokens=synthesis_max_tokens,
-        auto_intuition=auto_intuition,
-        adaptive_agents=_use_adaptive,
-        target_latency_ms=target_latency_ms,
-        agent_timeout_seconds=agent_timeout_seconds,
-        verbose=verbose,
-        progress_callback=_progress,
-    ) as orchestrator:
-        if not quiet:
-            _print("\n⏳  Querying domain experts…\n" if not HAS_RICH
-                   else "\n[bold yellow]⏳  Querying domain experts…[/bold yellow]\n")
-
-        # Use solver dispatch when policy is active (non-baseline or non-direct approach).
-        # The baseline policy with the default direct approach preserves legacy behaviour.
-        _use_solver = not (
-            solver_policy is SolverPolicy.BASELINE
-            and selection.approach is SolverApproach.DIRECT
-        )
-        if _use_solver:
-            result = orchestrator.run_solver(question, selection=selection, domains=domains)
-        else:
-            result = orchestrator.run(question, domains=domains)
-
-    workflow_mode = WorkflowMapMode(args.workflow_map)
-    _display_result(result, workflow_mode=workflow_mode)
+        parser.print_help()
 
 
 if __name__ == "__main__":

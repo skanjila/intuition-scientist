@@ -2,5 +2,6 @@
 
 from src.llm.base import LLMBackend
 from src.llm.registry import get_backend, list_supported_providers
+from src.llm.huggingface_backend import HuggingFaceBackend
 
-__all__ = ["LLMBackend", "get_backend", "list_supported_providers"]
+__all__ = ["LLMBackend", "get_backend", "list_supported_providers", "HuggingFaceBackend"]

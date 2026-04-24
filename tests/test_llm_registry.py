@@ -20,7 +20,7 @@ class TestListSupportedProviders:
 
     def test_contains_expected_providers(self):
         providers = set(list_supported_providers())
-        assert {"mock", "ollama", "llamacpp", "groq", "together", "cloudflare", "openrouter"} == providers
+        assert {"mock", "ollama", "llamacpp", "groq", "together", "cloudflare", "openrouter", "huggingface"} == providers
 
 
 class TestGetBackendMock:
