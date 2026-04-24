@@ -123,6 +123,7 @@ class Domain(str, Enum):
     CLINICAL_TRIALS = "clinical_trials"
 
     # ── Legacy domains required by src/agents/base_agent.py ──────────────
+    STOCK_MARKET = "stock_market"
     SOCIAL_SCIENCE = "social_science"           # legacy
     INTERVIEW_PREP = "interview_prep"           # legacy
     ALGORITHMS_PROGRAMMING = "algorithms_programming"  # legacy
@@ -1236,3 +1237,180 @@ class ClinicalTrialsResult:
     autonomy_used: AutonomyLevel = AutonomyLevel.AI_PROPOSES
     ai_confidence: float = 0.5
     disclaimer: str = field(default=_MEDICAL_DISCLAIMER)
+
+
+# ---------------------------------------------------------------------------
+# Use case — Stock Market Prediction (Human Intuition + Agentic AI)
+# ---------------------------------------------------------------------------
+
+FINANCIAL_DISCLAIMER: str = (
+    "AI-generated financial analysis only. Not investment advice. "
+    "Past performance does not guarantee future results. "
+    "Always consult a qualified financial advisor before making investment decisions."
+)
+
+
+@dataclass
+class MarketSignal:
+    """A single signal feeding the stock-prediction ensemble.
+
+    Parameters
+    ----------
+    signal_type:
+        Category: "technical" | "fundamental" | "sentiment" | "macro" | "alternative"
+    name:
+        Short name, e.g. "RSI_14", "PE_ratio", "Twitter_sentiment_score".
+    value:
+        Current value of the signal.
+    interpretation:
+        Plain-English meaning: "oversold (<30)", "elevated valuation", etc.
+    weight:
+        Relative weight assigned by the ensemble (0.0–1.0, sums to 1.0 across signals).
+    """
+
+    signal_type: str
+    name: str
+    value: float
+    interpretation: str
+    weight: float = 0.0
+
+
+@dataclass
+class StockPredictionInput:
+    """Input context for the stock market prediction use case.
+
+    Parameters
+    ----------
+    ticker:
+        Stock ticker symbol, e.g. "AAPL", "NVDA", "SPY".
+    horizon:
+        Prediction horizon: "1d" | "1w" | "1m" | "3m" | "1y".
+    price_history:
+        Recent OHLCV data as list of dicts with keys
+        "date", "open", "high", "low", "close", "volume".
+    financials:
+        Optional fundamental data: revenue, earnings, margins, debt ratios.
+    news_headlines:
+        Recent news headlines or summaries for sentiment analysis.
+    macro_context:
+        Optional macro economic context: Fed rates, inflation, GDP growth.
+    human_thesis:
+        Optional human analyst's investment thesis to blend with AI analysis.
+
+    Usage
+    -----
+    .. code-block:: python
+
+        from src.orchestrator.business_orchestrator import BusinessOrchestrator
+        from src.models import StockPredictionInput, HumanJudgment, AutonomyLevel
+
+        orch = BusinessOrchestrator()
+        inp = StockPredictionInput(
+            ticker="NVDA",
+            horizon="1m",
+            news_headlines=["NVIDIA beats Q4 earnings by 25%", "AI chip demand surges"],
+        )
+        # Pure AI prediction
+        result = orch.predict_stock(inp)
+
+        # Blend with human analyst thesis
+        result = orch.predict_stock(
+            inp,
+            human_judgment=HumanJudgment(
+                context="NVDA 1-month outlook",
+                judgment="Bullish — data-center cycle not yet peaked, AI tailwinds continue",
+                confidence=0.75,
+            ),
+            autonomy=AutonomyLevel.AI_ASSISTS,
+        )
+        print(result.direction, result.confidence_pct)
+        print(result.thesis)
+
+    See ``docs/use_cases/18_stock_market_prediction.md`` for full documentation.
+    """
+
+    ticker: str
+    horizon: str = "1m"
+    price_history: list[dict] = field(default_factory=list)
+    financials: dict = field(default_factory=dict)
+    news_headlines: list[str] = field(default_factory=list)
+    macro_context: str = ""
+    human_thesis: str = ""
+
+
+@dataclass
+class StockPredictionResult:
+    """Stock market prediction output.
+
+    Produced by :meth:`~src.orchestrator.business_orchestrator.BusinessOrchestrator.predict_stock`.
+
+    The result blends signals from six analysis layers:
+    - Technical analysis (price action, indicators, chart patterns)
+    - Fundamental analysis (earnings quality, valuation, balance sheet)
+    - Sentiment analysis (news, social media, options flow)
+    - Macro analysis (interest rates, sector rotation, risk-on/off)
+    - Competitive intelligence (moat, industry dynamics, market share)
+    - Human analyst thesis (when provided via HumanJudgment)
+
+    Parameters
+    ----------
+    ticker:
+        Stock ticker symbol.
+    direction:
+        Predicted direction: "bullish" | "bearish" | "neutral".
+    confidence_pct:
+        Ensemble confidence in the direction (0–100 %).
+    price_target:
+        Estimated price target over the horizon (0 = not estimated).
+    upside_pct:
+        Estimated upside/downside percentage from current price.
+    signals:
+        Individual signals that fed the prediction ensemble.
+    thesis:
+        Plain-English investment thesis explaining the prediction.
+    bull_case:
+        Key factors that would drive upside.
+    bear_case:
+        Key risks and factors that could drive downside.
+    catalysts:
+        Upcoming events that could move the stock (earnings, FDA, Fed meeting).
+    risk_factors:
+        Specific risks to the position.
+    suggested_position_sizing:
+        Qualitative sizing guidance: "avoid" | "starter" | "half" | "full".
+    stop_loss_note:
+        Plain-English stop-loss suggestion.
+    escalation:
+        When AI confidence is low or conflicting signals are strong,
+        escalation prompts the human analyst to review before acting.
+    human_judgment:
+        The human analyst's thesis when provided.
+    autonomy_used:
+        The autonomy level that governed this prediction.
+    ai_confidence:
+        Raw AI ensemble confidence (0.0–1.0).
+    disclaimer:
+        Mandatory financial disclaimer.
+    """
+
+    ticker: str
+    direction: str = "neutral"       # "bullish" | "bearish" | "neutral"
+    confidence_pct: float = 50.0
+    price_target: float = 0.0
+    upside_pct: float = 0.0
+    signals: list[MarketSignal] = field(default_factory=list)
+    thesis: str = ""
+    bull_case: list[str] = field(default_factory=list)
+    bear_case: list[str] = field(default_factory=list)
+    catalysts: list[str] = field(default_factory=list)
+    risk_factors: list[str] = field(default_factory=list)
+    suggested_position_sizing: str = "starter"
+    stop_loss_note: str = ""
+    escalation: EscalationDecision = field(
+        default_factory=lambda: EscalationDecision(needs_escalation=False, reason="")
+    )
+    human_judgment: Optional[HumanJudgment] = None
+    autonomy_used: AutonomyLevel = AutonomyLevel.AI_ASSISTS
+    ai_confidence: float = 0.5
+    disclaimer: str = FINANCIAL_DISCLAIMER
+
