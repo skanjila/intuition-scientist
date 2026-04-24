@@ -1,4 +1,54 @@
-"""Shared data models for the Human Intuition Scientist."""
+"""Shared data models for the Business Agent Platform.
+
+Architecture overview
+---------------------
+This module defines every data contract used across the 12 business use
+cases.  There are four conceptual layers:
+
+1. **Domain registry** — :class:`Domain` enum listing every agent domain
+   that targets a real business problem.
+
+2. **Human-AI balance primitives** — :class:`HumanJudgment`,
+   :class:`AutonomyLevel`, and :class:`EscalationDecision` express *how*
+   human judgment is blended with AI recommendations at each decision point.
+   See ``docs/BUSINESS_USE_CASES.md`` §Human-AI Balance for the design
+   rationale.
+
+3. **Core exchange types** — :class:`AgentResponse` and
+   :class:`SearchResult` are the atomic outputs produced by every agent and
+   tool backend.
+
+4. **Per-use-case result types** — one typed dataclass per business use
+   case so callers always get strongly-typed, predictable outputs.
+
+Human-AI Balance
+----------------
+Every orchestrator entry point accepts an optional :class:`HumanJudgment`
+and an :class:`AutonomyLevel`.  The blend algorithm is:
+
+    human_weight = _AUTONOMY_BASE_WEIGHT[autonomy_level]
+    if human_judgment.override:
+        human_weight = 1.0                # human fully overrides AI
+    elif ai_confidence < ESCALATION_THRESHOLD:
+        needs_escalation = True           # request human input
+    final = human_weight * human + (1 - human_weight) * ai
+
+Default autonomy levels by use case:
+
+    ========================  =================  =============================
+    Use Case                  Default Autonomy   Escalation Triggers
+    ========================  =================  =============================
+    Customer Support Triage   AI_PROPOSES        P1/P2, "lawsuit", "breach"
+    Compliance Q&A            AI_ASSISTS         any legal interpretation
+    Incident Response         AI_PROPOSES        P1, >50 users impacted
+    Finance Reconciliation    AI_PROPOSES        variance > materiality
+    Sales Outreach            AI_ASSISTS         deal > $500K
+    Analytics Reporting       FULL_AUTO          anomaly > 3σ
+    Code Review               AI_PROPOSES        critical/high severity
+    Supply Chain Exception    AI_PROPOSES        cost > budget, no alt supplier
+    RFP Drafting              AI_ASSISTS         unlimited liability clause
+    ========================  =================  =============================
+"""
 
 from __future__ import annotations
 
@@ -7,40 +57,37 @@ from enum import Enum
 from typing import Optional
 
 
-class Domain(str, Enum):
-    """Scientific / engineering domains covered by the system."""
+# ---------------------------------------------------------------------------
+# Domain registry
+# ---------------------------------------------------------------------------
 
-    ELECTRICAL_ENGINEERING = "electrical_engineering"
-    COMPUTER_SCIENCE = "computer_science"
-    NEURAL_NETWORKS = "neural_networks"
-    SOCIAL_SCIENCE = "social_science"
-    SPACE_SCIENCE = "space_science"
-    PHYSICS = "physics"
-    DEEP_LEARNING = "deep_learning"
-    # High-economic-value industry domains
-    HEALTHCARE = "healthcare"
-    CLIMATE_ENERGY = "climate_energy"
-    FINANCE_ECONOMICS = "finance_economics"
-    CYBERSECURITY = "cybersecurity"
-    BIOTECH_GENOMICS = "biotech_genomics"
-    SUPPLY_CHAIN = "supply_chain"
-    # Enterprise problem domains
-    LEGAL_COMPLIANCE = "legal_compliance"
-    ENTERPRISE_ARCHITECTURE = "enterprise_architecture"
-    MARKETING_GROWTH = "marketing_growth"
-    ORGANIZATIONAL_BEHAVIOR = "organizational_behavior"
-    STRATEGY_INTELLIGENCE = "strategy_intelligence"
-    # Mastery domains
-    ALGORITHMS_PROGRAMMING = "algorithms_programming"
-    # Interview preparation
-    INTERVIEW_PREP = "interview_prep"
-    # PhD research domains
-    EE_LLM_RESEARCH = "ee_llm_research"
-    # Signal processing (dedicated iterative-problem agent)
-    SIGNAL_PROCESSING = "signal_processing"
-    # Experiment runner (experiment-protocol and simulation agent)
-    EXPERIMENT_RUNNER = "experiment_runner"
-    # Business use-case domains (proposals 1–9)
+
+class Domain(str, Enum):
+    """Agent domains — every value maps to exactly one business use case or
+    a supporting capability used by multiple use cases.
+
+    Primary use-case domains
+    ------------------------
+    CUSTOMER_SUPPORT        → Use case 1: Customer Support Triage
+    LEGAL_COMPLIANCE        → Use case 2: Compliance Policy Q&A (+ RFP support)
+    INCIDENT_RESPONSE       → Use case 3: Incident Response / On-Call
+    FINANCE_RECONCILIATION  → Use case 4: Finance Reconciliation
+    MARKETING_GROWTH        → Use case 5: Sales Research & Outreach (support)
+    ANALYTICS               → Use case 6: Analytics / Report Generation
+    CODE_REVIEW             → Use case 7: Code Review / PR Assistant
+    SUPPLY_CHAIN            → Use case 8: Supply Chain Exception Management
+    RFP_RESPONSE            → Use case 9: RFP Response Drafting
+
+    Supporting domains used across multiple use cases
+    -------------------------------------------------
+    FINANCE_ECONOMICS       → Use cases 4, 5, 8 (financial analysis)
+    CYBERSECURITY           → Use cases 3, 7 (security analysis)
+    ENTERPRISE_ARCHITECTURE → Use case 3 (system design context)
+    STRATEGY_INTELLIGENCE   → Use cases 5, 9 (competitive intelligence)
+    ORGANIZATIONAL_BEHAVIOR → Use case 1 (de-escalation, tone)
+    """
+
+    # ── Primary use-case domains ──────────────────────────────────────
     CUSTOMER_SUPPORT = "customer_support"
     INCIDENT_RESPONSE = "incident_response"
     FINANCE_RECONCILIATION = "finance_reconciliation"
@@ -48,26 +95,188 @@ class Domain(str, Enum):
     ANALYTICS = "analytics"
     RFP_RESPONSE = "rfp_response"
 
+    # ── Supporting domains ────────────────────────────────────────────
+    LEGAL_COMPLIANCE = "legal_compliance"
+    ENTERPRISE_ARCHITECTURE = "enterprise_architecture"
+    MARKETING_GROWTH = "marketing_growth"
+    ORGANIZATIONAL_BEHAVIOR = "organizational_behavior"
+    STRATEGY_INTELLIGENCE = "strategy_intelligence"
+    FINANCE_ECONOMICS = "finance_economics"
+    CYBERSECURITY = "cybersecurity"
+    SUPPLY_CHAIN = "supply_chain"
+
+
+# ---------------------------------------------------------------------------
+# Human-AI balance primitives
+# ---------------------------------------------------------------------------
+
+
+class AutonomyLevel(str, Enum):
+    """Controls how much weight the AI recommendation carries vs. human judgment.
+
+    Use this to configure the risk tolerance for each business use case or
+    individual invocation.
+
+    FULL_AUTO
+        AI decides and acts; human receives a summary notification.
+        Suitable for low-stakes, high-volume decisions (P4 tickets, style
+        comments in code review, informational report sections).
+
+    AI_PROPOSES
+        AI makes a concrete recommendation; human approves or rejects before
+        any action is taken.  Suitable for medium-stakes decisions (P3 ticket
+        routing, reconciliation journal entries, supply-chain substitutions).
+        *Default for most use cases.*
+
+    AI_ASSISTS
+        Human makes the primary decision with AI-generated analysis as
+        supporting material.  Suitable for high-stakes or judgment-heavy
+        decisions (legal interpretations, large-deal outreach, RFP strategy).
+
+    HUMAN_FIRST
+        Human judges first; AI validates, flags gaps, and adds evidence.
+        Suitable for the highest-stakes decisions (P1 incident escalation,
+        unlimited-liability contract clauses, regulatory enforcement actions).
+    """
+
+    FULL_AUTO = "full_auto"
+    AI_PROPOSES = "ai_proposes"
+    AI_ASSISTS = "ai_assists"
+    HUMAN_FIRST = "human_first"
+
+
+#: Base human-weight by autonomy level (before confidence adjustment).
+#: At FULL_AUTO the human weight is 0 — AI acts alone.
+#: At HUMAN_FIRST the human weight is 0.80 — human's judgment dominates.
+AUTONOMY_BASE_WEIGHT: dict[AutonomyLevel, float] = {
+    AutonomyLevel.FULL_AUTO: 0.00,
+    AutonomyLevel.AI_PROPOSES: 0.20,
+    AutonomyLevel.AI_ASSISTS: 0.50,
+    AutonomyLevel.HUMAN_FIRST: 0.80,
+}
+
+#: AI confidence below this threshold always triggers an escalation request,
+#: regardless of autonomy level.
+ESCALATION_CONFIDENCE_THRESHOLD: float = 0.55
+
 
 @dataclass
-class HumanIntuition:
-    """Structured representation of a human's intuitive answer."""
+class HumanJudgment:
+    """Structured human input captured at a decision checkpoint.
 
-    question: str
-    intuitive_answer: str
-    # 0.0 (wild guess) → 1.0 (highly confident)
-    confidence: float
-    reasoning: str = ""
-    domain_guesses: list[Domain] = field(default_factory=list)
+    When supplied to an orchestrator method the system blends it with the
+    AI recommendation according to the configured :class:`AutonomyLevel`.
+
+    Parameters
+    ----------
+    context:
+        A brief description of what the human is being asked to judge
+        (e.g. ``"Urgency classification for ticket #45821"``).
+    judgment:
+        The human's actual decision, opinion, or correction in plain text.
+    confidence:
+        How confident the human is in their judgment (0.0–1.0).  A lower
+        confidence raises the effective weight of the AI recommendation.
+    override:
+        When ``True`` the human completely overrides the AI; the blend
+        weight becomes 1.0 regardless of ``AutonomyLevel``.
+    notes:
+        Any additional context the human wants to record (e.g. rationale,
+        constraints, caveats).
+
+    Usage example
+    -------------
+    .. code-block:: python
+
+        from src.models import HumanJudgment, AutonomyLevel
+        from src.orchestrator.business_orchestrator import BusinessOrchestrator
+
+        orch = BusinessOrchestrator()
+        judgment = HumanJudgment(
+            context="Ticket urgency classification",
+            judgment="This is P2 — customer is on an enterprise SLA",
+            confidence=0.9,
+        )
+        result = orch.triage(
+            ticket_text="Payment API is returning 500 errors for all enterprise users",
+            human_judgment=judgment,
+            autonomy=AutonomyLevel.AI_PROPOSES,
+        )
+    """
+
+    context: str
+    judgment: str
+    confidence: float = 0.5
+    override: bool = False
+    notes: str = ""
 
     def __post_init__(self) -> None:
         if not 0.0 <= self.confidence <= 1.0:
-            raise ValueError("confidence must be between 0.0 and 1.0")
+            raise ValueError("HumanJudgment.confidence must be between 0.0 and 1.0")
+
+
+@dataclass
+class EscalationDecision:
+    """Describes whether and why a decision needs human review.
+
+    Produced automatically by each orchestrator method based on the AI
+    confidence score and use-case-specific escalation rules.
+
+    Parameters
+    ----------
+    needs_escalation:
+        ``True`` when human review is recommended before acting on the
+        AI result.
+    reason:
+        Plain-English explanation of why escalation was triggered
+        (e.g. ``"P1 urgency detected — SLA breach imminent"``).
+    urgency:
+        One of ``"immediate"`` (act within minutes), ``"review"`` (act
+        within hours), or ``"informational"`` (FYI, no action required).
+    checkpoint:
+        The specific decision or action that needs human input
+        (e.g. ``"Approve routing to Security team"``).
+    """
+
+    needs_escalation: bool
+    reason: str
+    urgency: str = "review"          # "immediate" | "review" | "informational"
+    checkpoint: str = ""
+
+
+# ---------------------------------------------------------------------------
+# Core exchange types
+# ---------------------------------------------------------------------------
 
 
 @dataclass
 class AgentResponse:
-    """A domain-specific agent's answer to the question."""
+    """A domain-specific agent's answer to any query.
+
+    This is the atomic output produced by every :class:`~src.agents.base_agent.BaseAgent`
+    subclass.  The orchestrator collects a list of these and synthesises them
+    into a use-case-specific typed result.
+
+    Parameters
+    ----------
+    domain:
+        Which agent produced this response.
+    answer:
+        The agent's final blended answer.
+    reasoning:
+        Step-by-step reasoning chain (may be truncated for display).
+    confidence:
+        Blended confidence score (0.0–1.0).
+    sources:
+        URLs or references cited by the tool-grounded pipeline.
+    mcp_context:
+        Raw tool/MCP context used in the tool-grounded pipeline.
+        Empty when the tool pipeline was skipped or returned nothing.
+    intuition_weight:
+        Fraction of the final answer drawn from the knowledge-only pipeline.
+    tool_weight:
+        Fraction drawn from the tool-grounded pipeline.
+    """
 
     domain: Domain
     answer: str
@@ -75,47 +284,29 @@ class AgentResponse:
     confidence: float
     sources: list[str] = field(default_factory=list)
     mcp_context: str = ""
-    #: Weight given to pure-intuition (knowledge-only) pipeline (0.0–1.0)
     intuition_weight: float = 0.5
-    #: Weight given to MCP/tool-grounded pipeline (0.0–1.0)
     tool_weight: float = 0.5
 
     def __post_init__(self) -> None:
         if not 0.0 <= self.confidence <= 1.0:
-            raise ValueError("confidence must be between 0.0 and 1.0")
-
-
-@dataclass
-class AlignmentScore:
-    """Semantic alignment between the human intuition and one agent response."""
-
-    domain: Domain
-    # 0.0 = completely divergent, 1.0 = perfect alignment
-    semantic_similarity: float
-    key_agreements: list[str] = field(default_factory=list)
-    key_divergences: list[str] = field(default_factory=list)
-    intuition_insight: str = ""
-
-
-@dataclass
-class WeighingResult:
-    """Full cross-agent weighing of human intuition vs. expert answers."""
-
-    question: str
-    human_intuition: HumanIntuition
-    agent_responses: list[AgentResponse]
-    alignment_scores: list[AlignmentScore]
-    # Weighted blend of human intuition and agent consensus
-    synthesized_answer: str
-    # How well the human's intuition held up overall (0-100 %)
-    intuition_accuracy_pct: float
-    overall_analysis: str
-    recommendations: list[str] = field(default_factory=list)
+            raise ValueError("AgentResponse.confidence must be between 0.0 and 1.0")
 
 
 @dataclass
 class SearchResult:
-    """A single web-search result returned by the MCP client."""
+    """A single result returned by any :class:`~src.mcp.tool_backend.ToolBackend`.
+
+    Parameters
+    ----------
+    title:
+        Short title or identifier for the result.
+    url:
+        Source URL or API endpoint path.  May be empty for internal data.
+    snippet:
+        Relevant excerpt (≤ 300 chars) shown to the agent as context.
+    relevance_score:
+        Backend-reported relevance (0.0–1.0).  ``None`` when unavailable.
+    """
 
     title: str
     url: str
@@ -124,378 +315,118 @@ class SearchResult:
 
 
 # ---------------------------------------------------------------------------
-# Experiment runner models
-# ---------------------------------------------------------------------------
-
-
-class ExperimentCategory(str, Enum):
-    """Taxonomy of lightweight experiment types the ExperimentRunnerAgent uses.
-
-    Each value corresponds to one of the canonical experiment types defined in
-    ``ExperimentRunnerAgent.EXPERIMENT_TYPES``.  ``NOT_APPLICABLE`` is used
-    when a question is classified as non-experimentable.
-    """
-
-    NUMERIC_SWEEP = "numeric_sweep"
-    MONTE_CARLO = "monte_carlo"
-    TOY_ANALYTICAL = "toy_analytical"
-    DIMENSIONAL_SCALING = "dimensional_scaling"
-    FINITE_DIFFERENCE = "finite_difference"
-    COMBINATORIAL = "combinatorial"
-    PERTURBATION = "perturbation"
-    FERMI_ESTIMATE = "fermi_estimate"
-    NOT_APPLICABLE = "not_applicable"
-
-
-@dataclass
-class QuestionExperimentability:
-    """Classification of whether a question warrants experimental investigation.
-
-    Produced by :meth:`ExperimentRunnerAgent.classify_question` using
-    deterministic rule-based scoring (no LLM required).
-
-    Attributes
-    ----------
-    question:
-        The original question that was classified.
-    is_experimentable:
-        ``True`` when the question can be meaningfully answered (at least in
-        part) through lightweight computational experiments.
-    score:
-        Raw classification score in ``[-1.0, +1.0]``.  Positive values
-        indicate evidence for experimentability; negative values indicate the
-        question is better served by direct analysis.
-    question_type:
-        Human-readable label for the dominant question category, e.g.
-        ``"quantitative-causal"``, ``"probabilistic"``, ``"definitional"``.
-    suggested_categories:
-        Ordered list of the most appropriate ``ExperimentCategory`` values for
-        this question (most relevant first).
-    reason:
-        Short plain-English explanation of why the question was classified
-        as experimentable or not.
-    """
-
-    question: str
-    is_experimentable: bool
-    score: float
-    question_type: str
-    suggested_categories: list[ExperimentCategory]
-    reason: str
-
-
-@dataclass
-class ExperimentSpec:
-    """Specification for one targeted experiment within an experiment plan.
-
-    Each ``ExperimentSpec`` is self-contained: a reader can reproduce the
-    experiment using only the fields here without any external dependencies.
-
-    Attributes
-    ----------
-    id:
-        Short identifier, e.g. ``"exp_1"`` or ``"monte_carlo_baseline"``.
-    category:
-        The experiment type drawn from ``ExperimentCategory``.
-    hypothesis:
-        One falsifiable claim this experiment tests (plain English).
-    variables:
-        Mapping with keys ``"independent"``, ``"dependent"``, and
-        ``"controlled"`` describing the experimental variables.
-    procedure:
-        Ordered list of plain-English steps to run the experiment.
-    python_snippet:
-        Self-contained, runnable Python/NumPy code implementing the
-        experiment.  Must use only the standard library + NumPy/SciPy.
-        Must be deterministic (random seeds fixed).  Max ~40 lines.
-    expected_outcome:
-        Quantitative prediction of what the snippet will show.
-    disconfirmation:
-        What result would *refute* the hypothesis.
-    """
-
-    id: str
-    category: ExperimentCategory
-    hypothesis: str
-    variables: dict[str, str]
-    procedure: list[str]
-    python_snippet: str
-    expected_outcome: str
-    disconfirmation: str
-
-
-@dataclass
-class ExperimentPlan:
-    """A structured set of experiments designed to answer a question.
-
-    Produced by :meth:`ExperimentRunnerAgent.plan_experiments`.
-
-    Attributes
-    ----------
-    question:
-        The original question the plan addresses.
-    experimentability:
-        Classification metadata explaining *why* experiments were or were not
-        proposed.
-    experiments:
-        Ordered list of :class:`ExperimentSpec` objects.  Empty when
-        ``experimentability.is_experimentable`` is ``False``.
-    synthesis_strategy:
-        Plain-English description of how to interpret and combine results
-        across all experiments to reach an overall conclusion.
-    """
-
-    question: str
-    experimentability: QuestionExperimentability
-    experiments: list[ExperimentSpec]
-    synthesis_strategy: str
-
-
-# ---------------------------------------------------------------------------
-# Debate harness models
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class DebatePosition:
-    """One participant's position in the multi-party debate.
-
-    A position can come from the human, from a domain agent, or from
-    MCP/tool-based evidence gathered at runtime.
-    """
-
-    #: Identifies the source: ``"human"``, ``"tool"``, or ``"agent:<domain>"``
-    source: str
-    #: The substantive position or argument
-    position: str
-    #: 0.0–1.0 confidence in this position
-    confidence: float
-    #: Supporting evidence, citations, or references
-    evidence: list[str] = field(default_factory=list)
-
-
-@dataclass
-class DebateRound:
-    """One structured round of the debate, focusing on a specific aspect.
-
-    Rounds surface where all participants agree vs. diverge, making the
-    human–machine–tool disagreement visible and auditable.
-    """
-
-    #: The specific question or dimension being examined this round
-    aspect: str
-    #: All positions put forward in this round
-    positions: list[DebatePosition]
-    #: Concepts/claims all participants converge on
-    agreements: list[str] = field(default_factory=list)
-    #: Claims where human and agents/tools diverge (``"<source>: <claim>"``)
-    disagreements: list[str] = field(default_factory=list)
-    #: Brief synthesis of what this round established
-    round_synthesis: str = ""
-
-
-@dataclass
-class DebateResult:
-    """Full structured debate outcome.
-
-    Captures the multi-party exchange between human intuition, MCP/tool
-    evidence, and domain-agent reasoning, then produces a moderated verdict.
-    """
-
-    question: str
-    human_position: DebatePosition
-    #: Evidence gathered by MCP tools/web search (empty when MCP disabled)
-    tool_evidence: DebatePosition
-    #: One position per domain agent that was invoked
-    agent_positions: list[DebatePosition]
-    #: Structured rounds (one per analytical dimension of the question)
-    rounds: list[DebateRound]
-    #: Final synthesised answer from all perspectives
-    synthesized_verdict: str
-    #: Confidence in the synthesised verdict (0.0–1.0)
-    verdict_confidence: float
-    #: How well human intuition held up (0–100 %)
-    intuition_accuracy_pct: float
-    #: Key takeaways from the debate
-    key_insights: list[str] = field(default_factory=list)
-    #: Recommendations for the human based on debate outcome
-    recommendations: list[str] = field(default_factory=list)
-
-
-# ---------------------------------------------------------------------------
-# Interview coaching models
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class InterviewResult:
-    """Full FAANG interview coaching result.
-
-    Produced by :meth:`AgentOrchestrator.interview_prep` which combines
-    three agents: InterviewPrepAgent (technical), AlgorithmsProgrammingAgent
-    (algo/language depth), and SocialScienceAgent (mental readiness).
-    """
-
-    question: str
-    #: The candidate's own answer
-    candidate_answer: str
-    #: Candidate's self-reported confidence (0.0–1.0)
-    candidate_confidence: float
-    #: How well candidate answer aligned with expert consensus (0.0–1.0)
-    technical_score: float
-    #: InterviewPrepAgent's technical evaluation and optimal solution
-    technical_feedback: str
-    #: InterviewPrepAgent's step-by-step reasoning
-    technical_reasoning: str
-    #: AlgorithmsProgrammingAgent's deep algorithmic / language insight
-    algorithmic_insight: str
-    #: SocialScienceAgent's mental prep coaching (stress, communication, STAR)
-    mental_preparation: str
-    #: Synthesised overall analysis from all three agents
-    overall_analysis: str
-    #: Best synthesised answer blending all perspectives
-    synthesized_answer: str
-    #: Actionable improvement recommendations
-    recommendations: list[str] = field(default_factory=list)
-
-
-# ---------------------------------------------------------------------------
-# Model evaluation / cycling models
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class ModelRunResult:
-    """Result from running the full pipeline with a single model backend."""
-
-    #: Provider spec string, e.g. ``"ollama:llama3.1:8b"`` or ``"mock"``
-    model_spec: str
-    #: Whether the backend was reachable
-    backend_available: bool
-    #: The full weighing result (``None`` when backend was unavailable)
-    weighing_result: Optional[WeighingResult]
-    #: Error message if the run failed
-    error: Optional[str] = None
-    #: Wall-clock time for this run in seconds
-    duration_seconds: float = 0.0
-
-
-# ---------------------------------------------------------------------------
-# Workflow trace / agentic-visibility models
-# ---------------------------------------------------------------------------
-
-
-class WorkflowMapMode(str, Enum):
-    """Controls how much workflow detail is appended to each answer."""
-
-    OFF = "off"
-    COMPACT = "compact"
-    STANDARD = "standard"
-    DEEP = "deep"
-
-
-@dataclass
-class WorkflowStep:
-    """One step in the agentic workflow trace."""
-
-    #: Short label shown in the Mermaid diagram
-    label: str
-    #: Human-readable description of what happened / why
-    description: str = ""
-    #: Optional tool name used in this step (e.g. ``"mcp_search"``)
-    tool: str = ""
-    #: Summary of the tool result (no raw secrets)
-    tool_result_summary: str = ""
-
-
-@dataclass
-class WorkflowTrace:
-    """Structured trace of the agentic reasoning workflow for one request.
-
-    This is produced *after* the orchestrator completes a run so that no
-    chain-of-thought is exposed—only an explainability summary.
-    """
-
-    question: str
-    #: Ordered steps the system took (used to build the Mermaid diagram)
-    steps: list[WorkflowStep] = field(default_factory=list)
-    #: Key inputs fed into the pipeline (question, domains, settings)
-    inputs_context: list[str] = field(default_factory=list)
-    #: Explicit assumptions the system made
-    assumptions: list[str] = field(default_factory=list)
-    #: High-level numbered plan
-    plan: list[str] = field(default_factory=list)
-    #: Tool-call entries: ``(tool_name, reason, result_summary)``
-    tool_calls: list[tuple[str, str, str]] = field(default_factory=list)
-    #: Intermediate artifacts: checklists, tables, acceptance criteria
-    intermediate_artifacts: list[str] = field(default_factory=list)
-    #: Suggested next actions for the user
-    next_actions: list[str] = field(default_factory=list)
-
-
-@dataclass
-class ModelEvaluationResult:
-    """Cross-model evaluation summary produced by
-    :meth:`AgentOrchestrator.evaluate_models`.
-
-    Cycles through a list of model backends, runs the full dual-pipeline
-    (human intuition + MCP tools), and compares results to surface:
-    - which models agree with the human intuition best,
-    - where models diverge from each other,
-    - what the multi-model consensus answer is.
-    """
-
-    question: str
-    #: Individual result per model
-    model_results: list[ModelRunResult]
-    #: Answer text that the majority of models converged on
-    consensus_answer: str
-    #: Summary of where models disagreed
-    divergence_summary: str
-    #: Spec of the model that achieved the highest intuition accuracy
-    best_model_spec: str
-    #: Number of model specs evaluated
-    models_evaluated: int
-    #: Number of models that were actually reachable
-    models_available: int
-    #: Mean intuition accuracy across available models (0–100 %)
-    mean_intuition_accuracy_pct: float
-
-
-# ---------------------------------------------------------------------------
-# Business use-case result models (proposals 1–9)
+# Use case 1 — Customer Support Triage
 # ---------------------------------------------------------------------------
 
 
 @dataclass
 class TriageResult:
-    """Customer support triage result (Proposal 1).
+    """Customer support triage output (Use case 1).
 
-    Produced by :meth:`AgentOrchestrator.triage`.
+    Produced by :meth:`~src.orchestrator.business_orchestrator.BusinessOrchestrator.triage`.
+
+    How to run
+    ----------
+    .. code-block:: python
+
+        from src.orchestrator.business_orchestrator import BusinessOrchestrator
+        from src.models import HumanJudgment, AutonomyLevel
+
+        orch = BusinessOrchestrator()
+        result = orch.triage(
+            "Payment API returning 500 errors for all enterprise users",
+            human_judgment=HumanJudgment(
+                context="Urgency check",
+                judgment="Definitely P1 — this is revenue-impacting",
+                confidence=0.95,
+            ),
+            autonomy=AutonomyLevel.AI_PROPOSES,
+        )
+        print(result.urgency, result.routing_department)
+        print(result.draft_response)
+
+    See ``docs/use_cases/01_customer_support_triage.md`` for full documentation.
     """
 
     ticket_text: str
-    #: P1–P4 urgency label
-    urgency: str
-    #: Department / team to route the ticket to
+    urgency: str                      # "P1" | "P2" | "P3" | "P4"
     routing_department: str
-    #: Draft first-response text ready to send to the customer
     draft_response: str
-    #: Related knowledge-base article URLs (may be empty)
     kb_articles: list[str] = field(default_factory=list)
-    #: Whether this ticket needs a human agent to step in immediately
-    escalation_flag: bool = False
-    #: Supporting reasoning from the agent ensemble
+    escalation: EscalationDecision = field(
+        default_factory=lambda: EscalationDecision(needs_escalation=False, reason="")
+    )
+    human_judgment: Optional[HumanJudgment] = None
+    autonomy_used: AutonomyLevel = AutonomyLevel.AI_PROPOSES
+    ai_confidence: float = 0.5
     reasoning: str = ""
-    #: Confidence in the triage decision (0.0–1.0)
-    confidence: float = 0.5
+
+
+# ---------------------------------------------------------------------------
+# Use case 2 — Compliance Policy Q&A (result is AgentResponse + escalation)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ComplianceAnswer:
+    """Compliance Q&A output (Use case 2).
+
+    Produced by :meth:`~src.orchestrator.business_orchestrator.BusinessOrchestrator.compliance_qa`.
+
+    How to run
+    ----------
+    .. code-block:: python
+
+        from src.orchestrator.business_orchestrator import BusinessOrchestrator
+        from src.mcp.vector_store_backend import VectorStoreBackend
+
+        store = VectorStoreBackend()
+        store.add_documents([
+            {"id": "gdpr-art17", "text": "GDPR Art.17: Right to erasure...", "source": "gdpr.pdf"},
+        ])
+        orch = BusinessOrchestrator()
+        result = orch.compliance_qa(
+            "Do we need to delete all user data on account closure under GDPR?",
+            tool_backend=store,
+        )
+        print(result.answer)
+        print(result.cited_sections)
+
+    See ``docs/use_cases/02_compliance_qa.md`` for full documentation.
+    """
+
+    question: str
+    answer: str
+    cited_sections: list[str] = field(default_factory=list)
+    escalation: EscalationDecision = field(
+        default_factory=lambda: EscalationDecision(needs_escalation=False, reason="")
+    )
+    human_judgment: Optional[HumanJudgment] = None
+    autonomy_used: AutonomyLevel = AutonomyLevel.AI_ASSISTS
+    ai_confidence: float = 0.5
+    reasoning: str = ""
+    sources: list[str] = field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Use case 3 — Incident Response
+# ---------------------------------------------------------------------------
 
 
 @dataclass
 class IncidentContext:
-    """Input context for incident-response triage (Proposal 3).
+    """Input context for incident-response triage (Use case 3).
 
-    Passed to :meth:`AgentOrchestrator.respond_to_incident`.
+    Parameters
+    ----------
+    alert_payload:
+        Raw alert text or JSON string from PagerDuty / Datadog / Opsgenie.
+    log_lines:
+        Recent log excerpts relevant to the alert (≤ 50 lines recommended).
+    service_graph:
+        Optional description of upstream/downstream service dependencies.
+    past_incidents:
+        Optional list of similar past incident summaries for pattern matching.
     """
 
     alert_payload: str
@@ -506,92 +437,201 @@ class IncidentContext:
 
 @dataclass
 class IncidentResponse:
-    """Structured incident-response recommendation (Proposal 3).
+    """Structured incident-response recommendation (Use case 3).
 
-    Produced by :meth:`AgentOrchestrator.respond_to_incident`.
+    Produced by :meth:`~src.orchestrator.business_orchestrator.BusinessOrchestrator.respond_to_incident`.
+
+    How to run
+    ----------
+    .. code-block:: python
+
+        from src.orchestrator.business_orchestrator import BusinessOrchestrator
+        from src.models import IncidentContext
+
+        ctx = IncidentContext(
+            alert_payload="[P1] api-gateway error rate 45% (threshold: 2%)",
+            log_lines=["WARN payments-service: connection refused", "..."],
+            service_graph="api-gateway → payments-service → postgres-primary",
+        )
+        orch = BusinessOrchestrator()
+        result = orch.respond_to_incident(ctx)
+        for step in result.mitigation_steps:
+            print(step)
+
+    See ``docs/use_cases/03_incident_response.md`` for full documentation.
     """
 
     alert_payload: str
-    #: Ranked list of probable root-cause hypotheses (most likely first)
     root_cause_hypotheses: list[str] = field(default_factory=list)
-    #: Ordered immediate mitigation steps
     mitigation_steps: list[str] = field(default_factory=list)
-    #: Relevant runbook / wiki URLs
     runbook_links: list[str] = field(default_factory=list)
-    #: P1 / P2 / P3 / P4
     severity: str = "P3"
-    #: Supporting reasoning
+    escalation: EscalationDecision = field(
+        default_factory=lambda: EscalationDecision(needs_escalation=False, reason="")
+    )
+    human_judgment: Optional[HumanJudgment] = None
+    autonomy_used: AutonomyLevel = AutonomyLevel.AI_PROPOSES
+    ai_confidence: float = 0.5
     reasoning: str = ""
-    confidence: float = 0.5
+
+
+# ---------------------------------------------------------------------------
+# Use case 4 — Finance Reconciliation
+# ---------------------------------------------------------------------------
 
 
 @dataclass
 class ReconciliationMatch:
-    """One matched ledger-to-invoice pair (Proposal 4)."""
+    """One matched ledger ↔ invoice pair (Use case 4)."""
 
     ledger_id: str
     invoice_id: str
-    #: 0.0–1.0 match confidence
     match_confidence: float
-    #: Absolute variance in the base currency
     variance: float = 0.0
     note: str = ""
 
 
 @dataclass
 class ReconciliationResult:
-    """Finance reconciliation output (Proposal 4).
+    """Finance reconciliation output (Use case 4).
 
-    Produced by :meth:`AgentOrchestrator.reconcile`.
+    Produced by :meth:`~src.orchestrator.business_orchestrator.BusinessOrchestrator.reconcile`.
+
+    How to run
+    ----------
+    .. code-block:: python
+
+        from src.orchestrator.business_orchestrator import BusinessOrchestrator
+        from src.mcp.structured_data_tool import StructuredDataToolBackend
+
+        tool = StructuredDataToolBackend(tolerance=0.01)
+        tool.load_ledger([{"id": "L001", "amount": 1000.00}])
+        tool.load_invoices([{"id": "INV-42", "amount": 1000.00}])
+
+        orch = BusinessOrchestrator()
+        result = orch.reconcile(
+            ledger=[{"id": "L001", "amount": 1000.00}],
+            invoices=[{"id": "INV-42", "amount": 1000.00}],
+            tool_backend=tool,
+        )
+        print(result.audit_narrative)
+
+    See ``docs/use_cases/04_finance_reconciliation.md`` for full documentation.
     """
 
     matched_pairs: list[ReconciliationMatch] = field(default_factory=list)
     unmatched_ledger_ids: list[str] = field(default_factory=list)
     unmatched_invoice_ids: list[str] = field(default_factory=list)
-    #: Per-item anomaly scores keyed by ledger/invoice ID
     anomaly_scores: dict[str, float] = field(default_factory=dict)
-    #: LLM-generated audit narrative
     audit_narrative: str = ""
-    #: Suggested correcting journal entries
     suggested_journals: list[str] = field(default_factory=list)
-    confidence: float = 0.5
+    escalation: EscalationDecision = field(
+        default_factory=lambda: EscalationDecision(needs_escalation=False, reason="")
+    )
+    human_judgment: Optional[HumanJudgment] = None
+    autonomy_used: AutonomyLevel = AutonomyLevel.AI_PROPOSES
+    ai_confidence: float = 0.5
+
+
+# ---------------------------------------------------------------------------
+# Use case 5 — Sales Research & Outreach
+# ---------------------------------------------------------------------------
 
 
 @dataclass
 class OutreachResult:
-    """Sales research & outreach result (Proposal 5).
+    """Sales research and outreach output (Use case 5).
 
-    Produced by :meth:`AgentOrchestrator.outreach`.
+    Produced by :meth:`~src.orchestrator.business_orchestrator.BusinessOrchestrator.outreach`.
+
+    How to run
+    ----------
+    .. code-block:: python
+
+        from src.orchestrator.business_orchestrator import BusinessOrchestrator
+
+        orch = BusinessOrchestrator()
+        result = orch.outreach(
+            company="Acme Corp",
+            product="DataPlatform Pro",
+            deal_value=250_000,
+        )
+        print(result.email_draft)
+        for q in result.discovery_questions:
+            print(" •", q)
+
+    See ``docs/use_cases/05_sales_outreach.md`` for full documentation.
     """
 
     company_name: str
     company_summary: str
     pain_points: list[str] = field(default_factory=list)
-    #: Personalised email draft
     email_draft: str = ""
-    #: MEDDIC qualification score 0–100
     meddic_score: float = 0.0
     discovery_questions: list[str] = field(default_factory=list)
     competitive_notes: str = ""
-    confidence: float = 0.5
+    escalation: EscalationDecision = field(
+        default_factory=lambda: EscalationDecision(needs_escalation=False, reason="")
+    )
+    human_judgment: Optional[HumanJudgment] = None
+    autonomy_used: AutonomyLevel = AutonomyLevel.AI_ASSISTS
+    ai_confidence: float = 0.5
+
+
+# ---------------------------------------------------------------------------
+# Use case 6 — Analytics / Report Generation
+# ---------------------------------------------------------------------------
 
 
 @dataclass
 class ReportContext:
-    """Input specification for analytics report generation (Proposal 6)."""
+    """Input specification for analytics report generation (Use case 6).
+
+    Parameters
+    ----------
+    metrics:
+        Dictionary of metric name → current value (numeric or string).
+        Example: ``{"revenue_usd": 4_200_000, "churn_pct": 1.8}``.
+    kpi_targets:
+        Optional dictionary of metric name → target value for comparison.
+    reporting_period:
+        Human-readable period label, e.g. ``"2026-W16"`` or ``"Q1 2026"``.
+    audience:
+        Report audience — ``"exec"`` (1-page brief), ``"ops"`` (operational
+        detail), or ``"tech"`` (technical deep-dive with SQL).
+    """
 
     metrics: dict[str, object]
     kpi_targets: dict[str, object] = field(default_factory=dict)
     reporting_period: str = ""
-    #: "exec" | "ops" | "tech"
-    audience: str = "ops"
+    audience: str = "ops"            # "exec" | "ops" | "tech"
 
 
 @dataclass
 class ReportResult:
-    """Analytics report output (Proposal 6).
+    """Analytics report output (Use case 6).
 
-    Produced by :meth:`AgentOrchestrator.generate_report`.
+    Produced by :meth:`~src.orchestrator.business_orchestrator.BusinessOrchestrator.generate_report`.
+
+    How to run
+    ----------
+    .. code-block:: python
+
+        from src.orchestrator.business_orchestrator import BusinessOrchestrator
+        from src.models import ReportContext
+
+        ctx = ReportContext(
+            metrics={"revenue_usd": 4_200_000, "churn_pct": 1.8, "cac_usd": 420},
+            kpi_targets={"revenue_usd": 4_000_000, "churn_pct": 2.0},
+            reporting_period="2026-W16",
+            audience="exec",
+        )
+        orch = BusinessOrchestrator()
+        result = orch.generate_report(ctx)
+        print(result.headline)
+        print(result.trend_analysis)
+
+    See ``docs/use_cases/06_analytics_reporting.md`` for full documentation.
     """
 
     headline: str
@@ -599,21 +639,44 @@ class ReportResult:
     anomalies: list[str] = field(default_factory=list)
     next_actions: list[str] = field(default_factory=list)
     chart_recommendations: list[str] = field(default_factory=list)
-    #: Suggested SQL queries for further investigation
     sql_queries: list[str] = field(default_factory=list)
-    confidence: float = 0.5
+    escalation: EscalationDecision = field(
+        default_factory=lambda: EscalationDecision(needs_escalation=False, reason="")
+    )
+    human_judgment: Optional[HumanJudgment] = None
+    autonomy_used: AutonomyLevel = AutonomyLevel.FULL_AUTO
+    ai_confidence: float = 0.5
+
+
+# ---------------------------------------------------------------------------
+# Use case 7 — Code Review / PR Assistant
+# ---------------------------------------------------------------------------
 
 
 @dataclass
 class CodeReviewComment:
-    """One inline code-review comment (Proposal 7)."""
+    """One inline code-review comment (Use case 7).
+
+    Parameters
+    ----------
+    file_path:
+        Relative path to the reviewed file.
+    line:
+        Line number (1-indexed).  Use 0 for a file-level comment.
+    severity:
+        ``"critical"`` | ``"high"`` | ``"medium"`` | ``"low"`` | ``"info"``
+    category:
+        ``"security"`` | ``"logic"`` | ``"performance"`` | ``"style"``
+        | ``"test"`` | ``"docs"``
+    message:
+        Concise description of the issue.
+    suggestion:
+        Concrete fix or recommended change.
+    """
 
     file_path: str
-    #: Line number (1-indexed; 0 = file-level comment)
     line: int
-    #: critical | high | medium | low | info
     severity: str
-    #: security | style | logic | performance | test | docs
     category: str
     message: str
     suggestion: str = ""
@@ -621,27 +684,75 @@ class CodeReviewComment:
 
 @dataclass
 class CodeReviewResult:
-    """Structured code-review output (Proposal 7).
+    """Structured code-review output (Use case 7).
 
-    Produced by :meth:`AgentOrchestrator.review_pr`.
+    Produced by :meth:`~src.orchestrator.business_orchestrator.BusinessOrchestrator.review_pr`.
+
+    How to run
+    ----------
+    .. code-block:: python
+
+        from src.orchestrator.business_orchestrator import BusinessOrchestrator
+
+        diff = open("my_feature.diff").read()
+        orch = BusinessOrchestrator()
+        result = orch.review_pr(
+            diff=diff,
+            description="Add OAuth2 login endpoint",
+        )
+        for comment in result.comments:
+            print(f"[{comment.severity}] {comment.file_path}:{comment.line}")
+            print(f"  {comment.message}")
+        print("Risk score:", result.risk_score)
+        print("Recommendation:", result.approval_recommendation)
+
+    See ``docs/use_cases/07_code_review.md`` for full documentation.
     """
 
     diff_summary: str
     comments: list[CodeReviewComment] = field(default_factory=list)
-    #: 0–100 overall risk score (higher = riskier)
     risk_score: float = 0.0
     security_flags: list[str] = field(default_factory=list)
-    #: "approve" | "request_changes" | "needs_review"
-    approval_recommendation: str = "needs_review"
+    approval_recommendation: str = "needs_review"  # "approve"|"request_changes"|"needs_review"
     overall_reasoning: str = ""
-    confidence: float = 0.5
+    escalation: EscalationDecision = field(
+        default_factory=lambda: EscalationDecision(needs_escalation=False, reason="")
+    )
+    human_judgment: Optional[HumanJudgment] = None
+    autonomy_used: AutonomyLevel = AutonomyLevel.AI_PROPOSES
+    ai_confidence: float = 0.5
+
+
+# ---------------------------------------------------------------------------
+# Use case 8 — Supply Chain Exception Management
+# ---------------------------------------------------------------------------
 
 
 @dataclass
 class ExceptionEvent:
-    """Supply-chain exception input (Proposal 8)."""
+    """Supply-chain exception input (Use case 8).
 
-    #: e.g. "late_delivery" | "stockout" | "supplier_failure" | "quality_hold"
+    Parameters
+    ----------
+    exception_type:
+        One of ``"late_delivery"``, ``"stockout"``, ``"supplier_failure"``,
+        ``"quality_hold"``, ``"demand_spike"``.
+    sku:
+        SKU or product identifier affected.
+    supplier:
+        Primary supplier name or ID.
+    severity:
+        ``"low"`` | ``"medium"`` | ``"high"`` | ``"critical"``
+    eta_days_late:
+        How many days late the shipment / replenishment is expected to be.
+    current_inventory:
+        Current on-hand stock quantity.
+    cost_to_expedite:
+        Estimated cost (base currency) to expedite the order.
+    notes:
+        Any free-text context from the supply chain team.
+    """
+
     exception_type: str
     sku: str
     supplier: str
@@ -654,36 +765,88 @@ class ExceptionEvent:
 
 @dataclass
 class ExceptionResponse:
-    """Supply-chain exception management output (Proposal 8).
+    """Supply-chain exception management output (Use case 8).
 
-    Produced by :meth:`AgentOrchestrator.handle_exception`.
+    Produced by :meth:`~src.orchestrator.business_orchestrator.BusinessOrchestrator.handle_exception`.
+
+    How to run
+    ----------
+    .. code-block:: python
+
+        from src.orchestrator.business_orchestrator import BusinessOrchestrator
+        from src.models import ExceptionEvent
+
+        event = ExceptionEvent(
+            exception_type="late_delivery",
+            sku="SKU-12345",
+            supplier="SupplierA",
+            severity="high",
+            eta_days_late=14,
+            current_inventory=145,
+            cost_to_expedite=8500.0,
+        )
+        orch = BusinessOrchestrator()
+        result = orch.handle_exception(event)
+        print(result.recommended_action)
+        print(f"Financial impact: ${result.financial_impact_estimate:,.0f}")
+
+    See ``docs/use_cases/08_supply_chain_exceptions.md`` for full documentation.
     """
 
     exception_type: str
     sku: str
-    #: "expedite" | "substitute" | "backorder" | "cancel" | "escalate"
-    recommended_action: str
+    recommended_action: str          # "expedite"|"substitute"|"backorder"|"cancel"|"escalate"
     financial_impact_estimate: float = 0.0
-    escalation_flag: bool = False
     alternative_suppliers: list[str] = field(default_factory=list)
     draft_po_lines: list[str] = field(default_factory=list)
+    escalation: EscalationDecision = field(
+        default_factory=lambda: EscalationDecision(needs_escalation=False, reason="")
+    )
+    human_judgment: Optional[HumanJudgment] = None
+    autonomy_used: AutonomyLevel = AutonomyLevel.AI_PROPOSES
+    ai_confidence: float = 0.5
     reasoning: str = ""
-    confidence: float = 0.5
+
+
+# ---------------------------------------------------------------------------
+# Use case 9 — RFP Response Drafting
+# ---------------------------------------------------------------------------
 
 
 @dataclass
 class RFPResult:
-    """RFP response drafting output (Proposal 9).
+    """RFP response drafting output (Use case 9).
 
-    Produced by :meth:`AgentOrchestrator.draft_rfp`.
+    Produced by :meth:`~src.orchestrator.business_orchestrator.BusinessOrchestrator.draft_rfp`.
+
+    How to run
+    ----------
+    .. code-block:: python
+
+        from src.orchestrator.business_orchestrator import BusinessOrchestrator
+
+        rfp_text = open("rfp_document.txt").read()
+        orch = BusinessOrchestrator()
+        result = orch.draft_rfp(
+            rfp_text=rfp_text,
+            rfp_title="Enterprise Data Platform RFP — Acme Corp",
+        )
+        for section, draft in result.section_drafts.items():
+            print(f"## {section}\\n{draft}\\n")
+        print("Risk flags:", result.risk_flags)
+
+    See ``docs/use_cases/09_rfp_drafting.md`` for full documentation.
     """
 
     rfp_title: str
-    #: Mapping of section heading → drafted response text
     section_drafts: dict[str, str] = field(default_factory=dict)
-    #: Mapping of requirement → "compliant" | "partial" | "non-compliant"
     compliance_matrix: dict[str, str] = field(default_factory=dict)
     win_themes: list[str] = field(default_factory=list)
     risk_flags: list[str] = field(default_factory=list)
     overall_strategy: str = ""
-    confidence: float = 0.5
+    escalation: EscalationDecision = field(
+        default_factory=lambda: EscalationDecision(needs_escalation=False, reason="")
+    )
+    human_judgment: Optional[HumanJudgment] = None
+    autonomy_used: AutonomyLevel = AutonomyLevel.AI_ASSISTS
+    ai_confidence: float = 0.5

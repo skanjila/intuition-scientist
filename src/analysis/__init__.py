@@ -1,1 +1,0 @@
-"""Analysis and weighing package."""
