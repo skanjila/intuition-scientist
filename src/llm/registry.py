@@ -36,6 +36,7 @@ SUPPORTED_PROVIDERS: frozenset[str] = frozenset(
         "together",
         "cloudflare",
         "openrouter",
+        "huggingface",
     }
 )
 
@@ -139,6 +140,13 @@ def get_backend(spec: str) -> "LLMBackend":
             )
         from src.llm.openrouter_backend import OpenRouterBackend
         return OpenRouterBackend(model=model)
+
+    if provider == "huggingface":
+        if not model:
+            from src.llm.huggingface_backend import HuggingFaceBackend
+            return HuggingFaceBackend()
+        from src.llm.huggingface_backend import HuggingFaceBackend
+        return HuggingFaceBackend(model_id=model)
 
     # Should never reach here given the allowlist check above
     raise ValueError(f"Unhandled provider: '{provider}'")  # pragma: no cover
