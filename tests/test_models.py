@@ -59,8 +59,8 @@ class TestDomain:
         assert legacy.issubset(values)
 
     def test_total_domain_count(self):
-        # 14 business + 8 medical + 12 legacy = 34
-        assert len(Domain) == 34
+        # 14 business + 8 medical + 1 stock_market + 12 legacy = 35
+        assert len(Domain) == 35
 
 
 # ---------------------------------------------------------------------------
