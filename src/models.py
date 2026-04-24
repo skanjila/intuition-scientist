@@ -176,7 +176,7 @@ class AutonomyLevel(str, Enum):
 #: Base human-weight by autonomy level (before confidence adjustment).
 #: At FULL_AUTO the human weight is 0.0 — AI acts alone.
 #: At HUMAN_FIRST the human weight is 0.80 — human's judgment dominates.
-AUTONOMY_BASE_WEIGHT: dict = {
+AUTONOMY_BASE_WEIGHT: dict[AutonomyLevel, float] = {
     AutonomyLevel.FULL_AUTO: 0.0,
     AutonomyLevel.AI_PROPOSES: 0.20,
     AutonomyLevel.AI_ASSISTS: 0.50,
