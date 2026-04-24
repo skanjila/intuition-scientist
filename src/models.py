@@ -1,35 +1,32 @@
-"""Shared data models for the Business Agent Platform.
+"""Shared data models for the AI Agent Platform.
 
 Architecture overview
 ---------------------
-This module defines every data contract used across the 12 business use
-cases.  There are four conceptual layers:
+This module defines every data contract used across business and medical
+AI agent use cases. There are four conceptual layers:
 
-1. **Domain registry** — :class:`Domain` enum listing every agent domain
-   that targets a real business problem.
+1. **Domain registry** — :class:`Domain` enum listing every agent domain.
 
 2. **Human-AI balance primitives** — :class:`HumanJudgment`,
    :class:`AutonomyLevel`, and :class:`EscalationDecision` express *how*
    human judgment is blended with AI recommendations at each decision point.
-   See ``docs/BUSINESS_USE_CASES.md`` §Human-AI Balance for the design
-   rationale.
 
 3. **Core exchange types** — :class:`AgentResponse` and
    :class:`SearchResult` are the atomic outputs produced by every agent and
    tool backend.
 
-4. **Per-use-case result types** — one typed dataclass per business use
-   case so callers always get strongly-typed, predictable outputs.
+4. **Per-use-case result types** — one typed dataclass per business or medical
+   use case so callers always get strongly-typed, predictable outputs.
 
 Human-AI Balance
 ----------------
 Every orchestrator entry point accepts an optional :class:`HumanJudgment`
-and an :class:`AutonomyLevel`.  The blend algorithm is:
+and an :class:`AutonomyLevel`.  The blend algorithm is::
 
-    human_weight = _AUTONOMY_BASE_WEIGHT[autonomy_level]
+    human_weight = AUTONOMY_BASE_WEIGHT[autonomy_level]
     if human_judgment.override:
         human_weight = 1.0                # human fully overrides AI
-    elif ai_confidence < ESCALATION_THRESHOLD:
+    elif ai_confidence < ESCALATION_CONFIDENCE_THRESHOLD:
         needs_escalation = True           # request human input
     final = human_weight * human + (1 - human_weight) * ai
 
@@ -47,6 +44,10 @@ Default autonomy levels by use case:
     Code Review               AI_PROPOSES        critical/high severity
     Supply Chain Exception    AI_PROPOSES        cost > budget, no alt supplier
     RFP Drafting              AI_ASSISTS         unlimited liability clause
+    Clinical Decision         HUMAN_FIRST        always — physician must validate
+    Drug Interaction          AI_PROPOSES        always — pharmacist must validate
+    Mental Health Triage      HUMAN_FIRST        always — clinician must review
+    Genomic Risk              HUMAN_FIRST        always — genetic counselor required
     ========================  =================  =============================
 """
 
@@ -54,7 +55,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional
+from typing import ClassVar, Optional
 
 
 # ---------------------------------------------------------------------------
@@ -63,39 +64,45 @@ from typing import Optional
 
 
 class Domain(str, Enum):
-    """Agent domains — every value maps to exactly one business use case or
-    a supporting capability used by multiple use cases.
+    """Agent domains — every value maps to exactly one business or medical use
+    case, or a supporting capability used by multiple use cases.
 
-    Primary use-case domains
-    ------------------------
+    New business domains
+    --------------------
     CUSTOMER_SUPPORT        → Use case 1: Customer Support Triage
-    LEGAL_COMPLIANCE        → Use case 2: Compliance Policy Q&A (+ RFP support)
-    INCIDENT_RESPONSE       → Use case 3: Incident Response / On-Call
-    FINANCE_RECONCILIATION  → Use case 4: Finance Reconciliation
-    MARKETING_GROWTH        → Use case 5: Sales Research & Outreach (support)
-    ANALYTICS               → Use case 6: Analytics / Report Generation
-    CODE_REVIEW             → Use case 7: Code Review / PR Assistant
-    SUPPLY_CHAIN            → Use case 8: Supply Chain Exception Management
-    RFP_RESPONSE            → Use case 9: RFP Response Drafting
+    INCIDENT_RESPONSE       → Use case 2: Incident Response / On-Call
+    FINANCE_RECONCILIATION  → Use case 3: Finance Reconciliation
+    CODE_REVIEW             → Use case 4: Code Review / PR Assistant
+    ANALYTICS               → Use case 5: Analytics / Report Generation
+    RFP_RESPONSE            → Use case 6: RFP Response Drafting
+    LEGAL_COMPLIANCE        → Use case 7: Compliance Policy Q&A
+    ENTERPRISE_ARCHITECTURE → Use case 8: System design context
+    MARKETING_GROWTH        → Use case 9: Sales Research & Outreach
+    ORGANIZATIONAL_BEHAVIOR → Use case 10: Workforce / de-escalation
+    STRATEGY_INTELLIGENCE   → Use case 11: Competitive intelligence
+    FINANCE_ECONOMICS       → Use case 12: Financial analysis
+    CYBERSECURITY           → Use case 13: Security analysis
+    SUPPLY_CHAIN            → Use case 14: Supply Chain Exception Management
 
-    Supporting domains used across multiple use cases
-    -------------------------------------------------
-    FINANCE_ECONOMICS       → Use cases 4, 5, 8 (financial analysis)
-    CYBERSECURITY           → Use cases 3, 7 (security analysis)
-    ENTERPRISE_ARCHITECTURE → Use case 3 (system design context)
-    STRATEGY_INTELLIGENCE   → Use cases 5, 9 (competitive intelligence)
-    ORGANIZATIONAL_BEHAVIOR → Use case 1 (de-escalation, tone)
+    New medical domains
+    -------------------
+    CLINICAL_DECISION_SUPPORT  → Medical use case 1
+    DRUG_INTERACTION           → Medical use case 2
+    MEDICAL_LITERATURE         → Medical use case 3
+    PATIENT_RISK               → Medical use case 4
+    HEALTHCARE_ACCESS          → Medical use case 5
+    GENOMICS_MEDICINE          → Medical use case 6
+    MENTAL_HEALTH_TRIAGE       → Medical use case 7
+    CLINICAL_TRIALS            → Medical use case 8
     """
 
-    # ── Primary use-case domains ──────────────────────────────────────
+    # ── New business domains ──────────────────────────────────────────────
     CUSTOMER_SUPPORT = "customer_support"
     INCIDENT_RESPONSE = "incident_response"
     FINANCE_RECONCILIATION = "finance_reconciliation"
     CODE_REVIEW = "code_review"
     ANALYTICS = "analytics"
     RFP_RESPONSE = "rfp_response"
-
-    # ── Supporting domains ────────────────────────────────────────────
     LEGAL_COMPLIANCE = "legal_compliance"
     ENTERPRISE_ARCHITECTURE = "enterprise_architecture"
     MARKETING_GROWTH = "marketing_growth"
@@ -105,6 +112,30 @@ class Domain(str, Enum):
     CYBERSECURITY = "cybersecurity"
     SUPPLY_CHAIN = "supply_chain"
 
+    # ── New medical domains ───────────────────────────────────────────────
+    CLINICAL_DECISION_SUPPORT = "clinical_decision_support"
+    DRUG_INTERACTION = "drug_interaction"
+    MEDICAL_LITERATURE = "medical_literature"
+    PATIENT_RISK = "patient_risk"
+    HEALTHCARE_ACCESS = "healthcare_access"
+    GENOMICS_MEDICINE = "genomics_medicine"
+    MENTAL_HEALTH_TRIAGE = "mental_health_triage"
+    CLINICAL_TRIALS = "clinical_trials"
+
+    # ── Legacy domains required by src/agents/base_agent.py ──────────────
+    SOCIAL_SCIENCE = "social_science"           # legacy
+    INTERVIEW_PREP = "interview_prep"           # legacy
+    ALGORITHMS_PROGRAMMING = "algorithms_programming"  # legacy
+    EE_LLM_RESEARCH = "ee_llm_research"         # legacy
+    PHYSICS = "physics"                         # legacy
+    NEURAL_NETWORKS = "neural_networks"         # legacy
+    DEEP_LEARNING = "deep_learning"             # legacy
+    SIGNAL_PROCESSING = "signal_processing"     # legacy
+    EXPERIMENT_RUNNER = "experiment_runner"     # legacy
+    HEALTHCARE = "healthcare"                   # legacy
+    CLIMATE_ENERGY = "climate_energy"           # legacy
+    BIOTECH_GENOMICS = "biotech_genomics"       # legacy
+
 
 # ---------------------------------------------------------------------------
 # Human-AI balance primitives
@@ -113,9 +144,6 @@ class Domain(str, Enum):
 
 class AutonomyLevel(str, Enum):
     """Controls how much weight the AI recommendation carries vs. human judgment.
-
-    Use this to configure the risk tolerance for each business use case or
-    individual invocation.
 
     FULL_AUTO
         AI decides and acts; human receives a summary notification.
@@ -136,7 +164,7 @@ class AutonomyLevel(str, Enum):
     HUMAN_FIRST
         Human judges first; AI validates, flags gaps, and adds evidence.
         Suitable for the highest-stakes decisions (P1 incident escalation,
-        unlimited-liability contract clauses, regulatory enforcement actions).
+        unlimited-liability contract clauses, all clinical decisions).
     """
 
     FULL_AUTO = "full_auto"
@@ -146,62 +174,44 @@ class AutonomyLevel(str, Enum):
 
 
 #: Base human-weight by autonomy level (before confidence adjustment).
-#: At FULL_AUTO the human weight is 0 — AI acts alone.
+#: At FULL_AUTO the human weight is 0.0 — AI acts alone.
 #: At HUMAN_FIRST the human weight is 0.80 — human's judgment dominates.
-AUTONOMY_BASE_WEIGHT: dict[AutonomyLevel, float] = {
-    AutonomyLevel.FULL_AUTO: 0.00,
+AUTONOMY_BASE_WEIGHT: dict = {
+    AutonomyLevel.FULL_AUTO: 0.0,
     AutonomyLevel.AI_PROPOSES: 0.20,
     AutonomyLevel.AI_ASSISTS: 0.50,
     AutonomyLevel.HUMAN_FIRST: 0.80,
 }
 
-#: AI confidence below this threshold always triggers an escalation request,
-#: regardless of autonomy level.
+#: Confidence below this threshold triggers escalation for standard domains.
 ESCALATION_CONFIDENCE_THRESHOLD: float = 0.55
+
+#: Confidence below this threshold triggers escalation for medical domains.
+MEDICAL_ESCALATION_THRESHOLD: float = 0.70
 
 
 @dataclass
 class HumanJudgment:
-    """Structured human input captured at a decision checkpoint.
+    """A human reviewer's judgment injected into the AI recommendation pipeline.
 
-    When supplied to an orchestrator method the system blends it with the
-    AI recommendation according to the configured :class:`AutonomyLevel`.
-
-    Parameters
-    ----------
-    context:
-        A brief description of what the human is being asked to judge
-        (e.g. ``"Urgency classification for ticket #45821"``).
-    judgment:
-        The human's actual decision, opinion, or correction in plain text.
-    confidence:
-        How confident the human is in their judgment (0.0–1.0).  A lower
-        confidence raises the effective weight of the AI recommendation.
-    override:
-        When ``True`` the human completely overrides the AI; the blend
-        weight becomes 1.0 regardless of ``AutonomyLevel``.
-    notes:
-        Any additional context the human wants to record (e.g. rationale,
-        constraints, caveats).
+    This dataclass carries the human's assessment of a specific decision
+    context. The orchestrator blends it with the AI output according to the
+    configured :class:`AutonomyLevel`.
 
     Usage example
     -------------
     .. code-block:: python
 
-        from src.models import HumanJudgment, AutonomyLevel
-        from src.orchestrator.business_orchestrator import BusinessOrchestrator
+        from src.models import HumanJudgment
 
-        orch = BusinessOrchestrator()
         judgment = HumanJudgment(
-            context="Ticket urgency classification",
-            judgment="This is P2 — customer is on an enterprise SLA",
-            confidence=0.9,
+            context="Ticket urgency classification for #45821",
+            judgment="This is P1 — customer is churning",
+            confidence=0.95,
+            override=True,
+            notes="Customer explicitly mentioned cancellation",
         )
-        result = orch.triage(
-            ticket_text="Payment API is returning 500 errors for all enterprise users",
-            human_judgment=judgment,
-            autonomy=AutonomyLevel.AI_PROPOSES,
-        )
+        assert judgment.override is True
     """
 
     context: str
@@ -211,36 +221,37 @@ class HumanJudgment:
     notes: str = ""
 
     def __post_init__(self) -> None:
-        if not 0.0 <= self.confidence <= 1.0:
-            raise ValueError("HumanJudgment.confidence must be between 0.0 and 1.0")
+        if not (0.0 <= self.confidence <= 1.0):
+            raise ValueError(
+                f"HumanJudgment.confidence must be in [0, 1]; got {self.confidence}"
+            )
 
 
 @dataclass
 class EscalationDecision:
-    """Describes whether and why a decision needs human review.
+    """Whether a result requires human review before action is taken.
 
-    Produced automatically by each orchestrator method based on the AI
-    confidence score and use-case-specific escalation rules.
+    Created by the orchestrator when AI confidence is below threshold or the
+    domain policy mandates human sign-off (e.g., all clinical decisions).
 
-    Parameters
-    ----------
-    needs_escalation:
-        ``True`` when human review is recommended before acting on the
-        AI result.
-    reason:
-        Plain-English explanation of why escalation was triggered
-        (e.g. ``"P1 urgency detected — SLA breach imminent"``).
-    urgency:
-        One of ``"immediate"`` (act within minutes), ``"review"`` (act
-        within hours), or ``"informational"`` (FYI, no action required).
-    checkpoint:
-        The specific decision or action that needs human input
-        (e.g. ``"Approve routing to Security team"``).
+    Usage example
+    -------------
+    .. code-block:: python
+
+        from src.models import EscalationDecision
+
+        decision = EscalationDecision(
+            needs_escalation=True,
+            reason="Confidence below threshold (0.42 < 0.55)",
+            urgency="immediate",
+            checkpoint="On-call engineer must acknowledge within 15 min",
+        )
+        assert decision.needs_escalation is True
     """
 
     needs_escalation: bool
     reason: str
-    urgency: str = "review"          # "immediate" | "review" | "informational"
+    urgency: str = "review"
     checkpoint: str = ""
 
 
@@ -251,61 +262,61 @@ class EscalationDecision:
 
 @dataclass
 class AgentResponse:
-    """A domain-specific agent's answer to any query.
+    """Atomic output produced by every BaseAgent subclass.
 
-    This is the atomic output produced by every :class:`~src.agents.base_agent.BaseAgent`
-    subclass.  The orchestrator collects a list of these and synthesises them
-    into a use-case-specific typed result.
+    The orchestrator collects a list of these and synthesises them into a
+    use-case-specific result type. Both intuition-only and tool-grounded
+    pipeline outputs are represented here.
 
-    Parameters
-    ----------
-    domain:
-        Which agent produced this response.
-    answer:
-        The agent's final blended answer.
-    reasoning:
-        Step-by-step reasoning chain (may be truncated for display).
-    confidence:
-        Blended confidence score (0.0–1.0).
-    sources:
-        URLs or references cited by the tool-grounded pipeline.
-    mcp_context:
-        Raw tool/MCP context used in the tool-grounded pipeline.
-        Empty when the tool pipeline was skipped or returned nothing.
-    intuition_weight:
-        Fraction of the final answer drawn from the knowledge-only pipeline.
-    tool_weight:
-        Fraction drawn from the tool-grounded pipeline.
+    Usage example
+    -------------
+    .. code-block:: python
+
+        from src.models import AgentResponse, Domain
+
+        resp = AgentResponse(
+            domain=Domain.CYBERSECURITY,
+            answer="The log pattern suggests lateral movement.",
+            reasoning="Matches MITRE ATT&CK T1021 (Remote Services).",
+            confidence=0.82,
+            sources=["https://attack.mitre.org/techniques/T1021/"],
+        )
+        assert resp.confidence == 0.82
     """
 
     domain: Domain
     answer: str
     reasoning: str
     confidence: float
-    sources: list[str] = field(default_factory=list)
+    sources: list = field(default_factory=list)
     mcp_context: str = ""
     intuition_weight: float = 0.5
     tool_weight: float = 0.5
 
     def __post_init__(self) -> None:
-        if not 0.0 <= self.confidence <= 1.0:
-            raise ValueError("AgentResponse.confidence must be between 0.0 and 1.0")
+        if not (0.0 <= self.confidence <= 1.0):
+            raise ValueError(
+                f"AgentResponse.confidence must be in [0, 1]; got {self.confidence}"
+            )
 
 
 @dataclass
 class SearchResult:
-    """A single result returned by any :class:`~src.mcp.tool_backend.ToolBackend`.
+    """A single result returned by any ToolBackend or MCP web-search call.
 
-    Parameters
-    ----------
-    title:
-        Short title or identifier for the result.
-    url:
-        Source URL or API endpoint path.  May be empty for internal data.
-    snippet:
-        Relevant excerpt (≤ 300 chars) shown to the agent as context.
-    relevance_score:
-        Backend-reported relevance (0.0–1.0).  ``None`` when unavailable.
+    Usage example
+    -------------
+    .. code-block:: python
+
+        from src.models import SearchResult
+
+        result = SearchResult(
+            title="OWASP Top 10 2023",
+            url="https://owasp.org/Top10/",
+            snippet="The OWASP Top 10 is a standard awareness document...",
+            relevance_score=0.91,
+        )
+        assert result.relevance_score == 0.91
     """
 
     title: str
@@ -315,7 +326,7 @@ class SearchResult:
 
 
 # ---------------------------------------------------------------------------
-# Use case 1 — Customer Support Triage
+# Business result types
 # ---------------------------------------------------------------------------
 
 
@@ -323,36 +334,30 @@ class SearchResult:
 class TriageResult:
     """Customer support triage output (Use case 1).
 
-    Produced by :meth:`~src.orchestrator.business_orchestrator.BusinessOrchestrator.triage`.
+    Produced by the customer-support orchestrator after classifying a ticket,
+    selecting a routing department, and drafting an initial response.
 
-    How to run
-    ----------
+    Usage example
+    -------------
     .. code-block:: python
 
-        from src.orchestrator.business_orchestrator import BusinessOrchestrator
-        from src.models import HumanJudgment, AutonomyLevel
+        from src.models import TriageResult, EscalationDecision, AutonomyLevel
 
-        orch = BusinessOrchestrator()
-        result = orch.triage(
-            "Payment API returning 500 errors for all enterprise users",
-            human_judgment=HumanJudgment(
-                context="Urgency check",
-                judgment="Definitely P1 — this is revenue-impacting",
-                confidence=0.95,
-            ),
-            autonomy=AutonomyLevel.AI_PROPOSES,
+        result = TriageResult(
+            ticket_text="My payment was charged twice.",
+            urgency="P2",
+            routing_department="billing",
+            draft_response="We sincerely apologise and will investigate...",
+            kb_articles=["KB-1042"],
         )
-        print(result.urgency, result.routing_department)
-        print(result.draft_response)
-
-    See ``docs/use_cases/01_customer_support_triage.md`` for full documentation.
+        assert result.urgency == "P2"
     """
 
     ticket_text: str
-    urgency: str                      # "P1" | "P2" | "P3" | "P4"
+    urgency: str
     routing_department: str
     draft_response: str
-    kb_articles: list[str] = field(default_factory=list)
+    kb_articles: list = field(default_factory=list)
     escalation: EscalationDecision = field(
         default_factory=lambda: EscalationDecision(needs_escalation=False, reason="")
     )
@@ -362,42 +367,30 @@ class TriageResult:
     reasoning: str = ""
 
 
-# ---------------------------------------------------------------------------
-# Use case 2 — Compliance Policy Q&A (result is AgentResponse + escalation)
-# ---------------------------------------------------------------------------
-
-
 @dataclass
 class ComplianceAnswer:
-    """Compliance Q&A output (Use case 2).
+    """Compliance policy Q&A output (Use case 2).
 
-    Produced by :meth:`~src.orchestrator.business_orchestrator.BusinessOrchestrator.compliance_qa`.
+    Produced when a user asks a legal or regulatory policy question.
+    Always includes cited document sections and escalation guidance.
 
-    How to run
-    ----------
+    Usage example
+    -------------
     .. code-block:: python
 
-        from src.orchestrator.business_orchestrator import BusinessOrchestrator
-        from src.mcp.vector_store_backend import VectorStoreBackend
+        from src.models import ComplianceAnswer
 
-        store = VectorStoreBackend()
-        store.add_documents([
-            {"id": "gdpr-art17", "text": "GDPR Art.17: Right to erasure...", "source": "gdpr.pdf"},
-        ])
-        orch = BusinessOrchestrator()
-        result = orch.compliance_qa(
-            "Do we need to delete all user data on account closure under GDPR?",
-            tool_backend=store,
+        answer = ComplianceAnswer(
+            question="Does GDPR require consent for analytics cookies?",
+            answer="Yes — explicit, informed, and freely given consent is required.",
+            cited_sections=["GDPR Art. 6(1)(a)", "Recital 32"],
         )
-        print(result.answer)
-        print(result.cited_sections)
-
-    See ``docs/use_cases/02_compliance_qa.md`` for full documentation.
+        assert "GDPR Art. 6(1)(a)" in answer.cited_sections
     """
 
     question: str
     answer: str
-    cited_sections: list[str] = field(default_factory=list)
+    cited_sections: list = field(default_factory=list)
     escalation: EscalationDecision = field(
         default_factory=lambda: EscalationDecision(needs_escalation=False, reason="")
     )
@@ -405,66 +398,62 @@ class ComplianceAnswer:
     autonomy_used: AutonomyLevel = AutonomyLevel.AI_ASSISTS
     ai_confidence: float = 0.5
     reasoning: str = ""
-    sources: list[str] = field(default_factory=list)
-
-
-# ---------------------------------------------------------------------------
-# Use case 3 — Incident Response
-# ---------------------------------------------------------------------------
+    sources: list = field(default_factory=list)
 
 
 @dataclass
 class IncidentContext:
-    """Input context for incident-response triage (Use case 3).
+    """Input payload for the incident-response pipeline (Use case 3).
 
-    Parameters
-    ----------
-    alert_payload:
-        Raw alert text or JSON string from PagerDuty / Datadog / Opsgenie.
-    log_lines:
-        Recent log excerpts relevant to the alert (≤ 50 lines recommended).
-    service_graph:
-        Optional description of upstream/downstream service dependencies.
-    past_incidents:
-        Optional list of similar past incident summaries for pattern matching.
+    Bundles the alert, logs, service topology, and historical incidents so the
+    orchestrator can build root-cause hypotheses.
+
+    Usage example
+    -------------
+    .. code-block:: python
+
+        from src.models import IncidentContext
+
+        ctx = IncidentContext(
+            alert_payload='{"service":"payments","error_rate":0.42}',
+            log_lines=["ERROR: DB connection timeout", "WARN: retry 3/3"],
+            service_graph="payments -> db-primary",
+        )
+        assert ctx.service_graph != ""
     """
 
     alert_payload: str
-    log_lines: list[str] = field(default_factory=list)
+    log_lines: list = field(default_factory=list)
     service_graph: str = ""
-    past_incidents: list[str] = field(default_factory=list)
+    past_incidents: list = field(default_factory=list)
 
 
 @dataclass
 class IncidentResponse:
-    """Structured incident-response recommendation (Use case 3).
+    """Incident response orchestrator output (Use case 3).
 
-    Produced by :meth:`~src.orchestrator.business_orchestrator.BusinessOrchestrator.respond_to_incident`.
+    Contains root-cause hypotheses, mitigation steps, runbook links, and
+    an escalation decision.
 
-    How to run
-    ----------
+    Usage example
+    -------------
     .. code-block:: python
 
-        from src.orchestrator.business_orchestrator import BusinessOrchestrator
-        from src.models import IncidentContext
+        from src.models import IncidentResponse
 
-        ctx = IncidentContext(
-            alert_payload="[P1] api-gateway error rate 45% (threshold: 2%)",
-            log_lines=["WARN payments-service: connection refused", "..."],
-            service_graph="api-gateway → payments-service → postgres-primary",
+        resp = IncidentResponse(
+            alert_payload='{"service":"payments","error_rate":0.42}',
+            root_cause_hypotheses=["DB connection pool exhausted"],
+            mitigation_steps=["Restart connection pool", "Scale read replicas"],
+            severity="P2",
         )
-        orch = BusinessOrchestrator()
-        result = orch.respond_to_incident(ctx)
-        for step in result.mitigation_steps:
-            print(step)
-
-    See ``docs/use_cases/03_incident_response.md`` for full documentation.
+        assert resp.severity == "P2"
     """
 
     alert_payload: str
-    root_cause_hypotheses: list[str] = field(default_factory=list)
-    mitigation_steps: list[str] = field(default_factory=list)
-    runbook_links: list[str] = field(default_factory=list)
+    root_cause_hypotheses: list = field(default_factory=list)
+    mitigation_steps: list = field(default_factory=list)
+    runbook_links: list = field(default_factory=list)
     severity: str = "P3"
     escalation: EscalationDecision = field(
         default_factory=lambda: EscalationDecision(needs_escalation=False, reason="")
@@ -475,14 +464,25 @@ class IncidentResponse:
     reasoning: str = ""
 
 
-# ---------------------------------------------------------------------------
-# Use case 4 — Finance Reconciliation
-# ---------------------------------------------------------------------------
-
-
 @dataclass
 class ReconciliationMatch:
-    """One matched ledger ↔ invoice pair (Use case 4)."""
+    """A single matched ledger/invoice pair from the reconciliation engine (Use case 4).
+
+    Usage example
+    -------------
+    .. code-block:: python
+
+        from src.models import ReconciliationMatch
+
+        match = ReconciliationMatch(
+            ledger_id="GL-20240301-0042",
+            invoice_id="INV-88123",
+            match_confidence=0.97,
+            variance=0.01,
+            note="Penny rounding on FX conversion",
+        )
+        assert match.match_confidence > 0.9
+    """
 
     ledger_id: str
     invoice_id: str
@@ -493,38 +493,32 @@ class ReconciliationMatch:
 
 @dataclass
 class ReconciliationResult:
-    """Finance reconciliation output (Use case 4).
+    """Finance reconciliation orchestrator output (Use case 4).
 
-    Produced by :meth:`~src.orchestrator.business_orchestrator.BusinessOrchestrator.reconcile`.
+    Contains matched pairs, unmatched items, anomaly scores, and a suggested
+    journal-entry narrative for audit purposes.
 
-    How to run
-    ----------
+    Usage example
+    -------------
     .. code-block:: python
 
-        from src.orchestrator.business_orchestrator import BusinessOrchestrator
-        from src.mcp.structured_data_tool import StructuredDataToolBackend
+        from src.models import ReconciliationResult, ReconciliationMatch
 
-        tool = StructuredDataToolBackend(tolerance=0.01)
-        tool.load_ledger([{"id": "L001", "amount": 1000.00}])
-        tool.load_invoices([{"id": "INV-42", "amount": 1000.00}])
-
-        orch = BusinessOrchestrator()
-        result = orch.reconcile(
-            ledger=[{"id": "L001", "amount": 1000.00}],
-            invoices=[{"id": "INV-42", "amount": 1000.00}],
-            tool_backend=tool,
+        result = ReconciliationResult(
+            matched_pairs=[
+                ReconciliationMatch("GL-001", "INV-001", 0.99)
+            ],
+            audit_narrative="All items reconciled within materiality threshold.",
         )
-        print(result.audit_narrative)
-
-    See ``docs/use_cases/04_finance_reconciliation.md`` for full documentation.
+        assert len(result.matched_pairs) == 1
     """
 
-    matched_pairs: list[ReconciliationMatch] = field(default_factory=list)
-    unmatched_ledger_ids: list[str] = field(default_factory=list)
-    unmatched_invoice_ids: list[str] = field(default_factory=list)
-    anomaly_scores: dict[str, float] = field(default_factory=dict)
+    matched_pairs: list = field(default_factory=list)
+    unmatched_ledger_ids: list = field(default_factory=list)
+    unmatched_invoice_ids: list = field(default_factory=list)
+    anomaly_scores: dict = field(default_factory=dict)
     audit_narrative: str = ""
-    suggested_journals: list[str] = field(default_factory=list)
+    suggested_journals: list = field(default_factory=list)
     escalation: EscalationDecision = field(
         default_factory=lambda: EscalationDecision(needs_escalation=False, reason="")
     )
@@ -533,42 +527,35 @@ class ReconciliationResult:
     ai_confidence: float = 0.5
 
 
-# ---------------------------------------------------------------------------
-# Use case 5 — Sales Research & Outreach
-# ---------------------------------------------------------------------------
-
-
 @dataclass
 class OutreachResult:
     """Sales research and outreach output (Use case 5).
 
-    Produced by :meth:`~src.orchestrator.business_orchestrator.BusinessOrchestrator.outreach`.
+    Contains a company summary, identified pain points, a personalised email
+    draft, MEDDIC qualification score, and discovery questions.
 
-    How to run
-    ----------
+    Usage example
+    -------------
     .. code-block:: python
 
-        from src.orchestrator.business_orchestrator import BusinessOrchestrator
+        from src.models import OutreachResult
 
-        orch = BusinessOrchestrator()
-        result = orch.outreach(
-            company="Acme Corp",
-            product="DataPlatform Pro",
-            deal_value=250_000,
+        result = OutreachResult(
+            company_name="Acme Corp",
+            company_summary="Mid-market SaaS vendor focused on HR automation.",
+            pain_points=["Manual payroll reconciliation", "High attrition"],
+            email_draft="Hi Sarah, I noticed Acme recently...",
+            meddic_score=0.62,
         )
-        print(result.email_draft)
-        for q in result.discovery_questions:
-            print(" •", q)
-
-    See ``docs/use_cases/05_sales_outreach.md`` for full documentation.
+        assert result.meddic_score > 0.5
     """
 
     company_name: str
     company_summary: str
-    pain_points: list[str] = field(default_factory=list)
+    pain_points: list = field(default_factory=list)
     email_draft: str = ""
     meddic_score: float = 0.0
-    discovery_questions: list[str] = field(default_factory=list)
+    discovery_questions: list = field(default_factory=list)
     competitive_notes: str = ""
     escalation: EscalationDecision = field(
         default_factory=lambda: EscalationDecision(needs_escalation=False, reason="")
@@ -578,68 +565,59 @@ class OutreachResult:
     ai_confidence: float = 0.5
 
 
-# ---------------------------------------------------------------------------
-# Use case 6 — Analytics / Report Generation
-# ---------------------------------------------------------------------------
-
-
 @dataclass
 class ReportContext:
-    """Input specification for analytics report generation (Use case 6).
+    """Input payload for the analytics report generation pipeline (Use case 6).
 
-    Parameters
-    ----------
-    metrics:
-        Dictionary of metric name → current value (numeric or string).
-        Example: ``{"revenue_usd": 4_200_000, "churn_pct": 1.8}``.
-    kpi_targets:
-        Optional dictionary of metric name → target value for comparison.
-    reporting_period:
-        Human-readable period label, e.g. ``"2026-W16"`` or ``"Q1 2026"``.
-    audience:
-        Report audience — ``"exec"`` (1-page brief), ``"ops"`` (operational
-        detail), or ``"tech"`` (technical deep-dive with SQL).
+    Usage example
+    -------------
+    .. code-block:: python
+
+        from src.models import ReportContext
+
+        ctx = ReportContext(
+            metrics={"dau": 14200, "mrr": 82000, "churn_rate": 0.021},
+            kpi_targets={"mrr": 90000, "churn_rate": 0.015},
+            reporting_period="2024-Q1",
+            audience="exec",
+        )
+        assert ctx.audience == "exec"
     """
 
-    metrics: dict[str, object]
-    kpi_targets: dict[str, object] = field(default_factory=dict)
+    metrics: dict
+    kpi_targets: dict = field(default_factory=dict)
     reporting_period: str = ""
-    audience: str = "ops"            # "exec" | "ops" | "tech"
+    audience: str = "ops"
 
 
 @dataclass
 class ReportResult:
-    """Analytics report output (Use case 6).
+    """Analytics report generation output (Use case 6).
 
-    Produced by :meth:`~src.orchestrator.business_orchestrator.BusinessOrchestrator.generate_report`.
+    Contains a headline summary, trend analysis, anomaly list, next actions,
+    chart recommendations, and optional SQL queries for self-serve analytics.
 
-    How to run
-    ----------
+    Usage example
+    -------------
     .. code-block:: python
 
-        from src.orchestrator.business_orchestrator import BusinessOrchestrator
-        from src.models import ReportContext
+        from src.models import ReportResult
 
-        ctx = ReportContext(
-            metrics={"revenue_usd": 4_200_000, "churn_pct": 1.8, "cac_usd": 420},
-            kpi_targets={"revenue_usd": 4_000_000, "churn_pct": 2.0},
-            reporting_period="2026-W16",
-            audience="exec",
+        result = ReportResult(
+            headline="MRR grew 8% QoQ but churn exceeded target by 40%.",
+            trend_analysis="Churn accelerated in the SMB segment.",
+            anomalies=["SMB churn spike in week 11"],
+            next_actions=["Investigate SMB churn root cause"],
         )
-        orch = BusinessOrchestrator()
-        result = orch.generate_report(ctx)
-        print(result.headline)
-        print(result.trend_analysis)
-
-    See ``docs/use_cases/06_analytics_reporting.md`` for full documentation.
+        assert "churn" in result.headline
     """
 
     headline: str
     trend_analysis: str
-    anomalies: list[str] = field(default_factory=list)
-    next_actions: list[str] = field(default_factory=list)
-    chart_recommendations: list[str] = field(default_factory=list)
-    sql_queries: list[str] = field(default_factory=list)
+    anomalies: list = field(default_factory=list)
+    next_actions: list = field(default_factory=list)
+    chart_recommendations: list = field(default_factory=list)
+    sql_queries: list = field(default_factory=list)
     escalation: EscalationDecision = field(
         default_factory=lambda: EscalationDecision(needs_escalation=False, reason="")
     )
@@ -648,30 +626,25 @@ class ReportResult:
     ai_confidence: float = 0.5
 
 
-# ---------------------------------------------------------------------------
-# Use case 7 — Code Review / PR Assistant
-# ---------------------------------------------------------------------------
-
-
 @dataclass
 class CodeReviewComment:
-    """One inline code-review comment (Use case 7).
+    """A single inline comment from the code-review agent (Use case 7).
 
-    Parameters
-    ----------
-    file_path:
-        Relative path to the reviewed file.
-    line:
-        Line number (1-indexed).  Use 0 for a file-level comment.
-    severity:
-        ``"critical"`` | ``"high"`` | ``"medium"`` | ``"low"`` | ``"info"``
-    category:
-        ``"security"`` | ``"logic"`` | ``"performance"`` | ``"style"``
-        | ``"test"`` | ``"docs"``
-    message:
-        Concise description of the issue.
-    suggestion:
-        Concrete fix or recommended change.
+    Usage example
+    -------------
+    .. code-block:: python
+
+        from src.models import CodeReviewComment
+
+        comment = CodeReviewComment(
+            file_path="src/auth/tokens.py",
+            line=42,
+            severity="critical",
+            category="security",
+            message="JWT secret is hard-coded.",
+            suggestion="Load secret from environment variable via os.getenv.",
+        )
+        assert comment.severity == "critical"
     """
 
     file_path: str
@@ -684,36 +657,34 @@ class CodeReviewComment:
 
 @dataclass
 class CodeReviewResult:
-    """Structured code-review output (Use case 7).
+    """Code review / PR assistant output (Use case 7).
 
-    Produced by :meth:`~src.orchestrator.business_orchestrator.BusinessOrchestrator.review_pr`.
+    Contains inline comments, a risk score, security flags, and an approval
+    recommendation for the pull request.
 
-    How to run
-    ----------
+    Usage example
+    -------------
     .. code-block:: python
 
-        from src.orchestrator.business_orchestrator import BusinessOrchestrator
+        from src.models import CodeReviewResult, CodeReviewComment
 
-        diff = open("my_feature.diff").read()
-        orch = BusinessOrchestrator()
-        result = orch.review_pr(
-            diff=diff,
-            description="Add OAuth2 login endpoint",
+        result = CodeReviewResult(
+            diff_summary="Adds JWT auth middleware; 3 files changed.",
+            comments=[
+                CodeReviewComment("auth.py", 12, "high", "security",
+                                  "Token not validated", "Add verify=True")
+            ],
+            risk_score=0.75,
+            approval_recommendation="needs_review",
         )
-        for comment in result.comments:
-            print(f"[{comment.severity}] {comment.file_path}:{comment.line}")
-            print(f"  {comment.message}")
-        print("Risk score:", result.risk_score)
-        print("Recommendation:", result.approval_recommendation)
-
-    See ``docs/use_cases/07_code_review.md`` for full documentation.
+        assert result.risk_score > 0.5
     """
 
     diff_summary: str
-    comments: list[CodeReviewComment] = field(default_factory=list)
+    comments: list = field(default_factory=list)
     risk_score: float = 0.0
-    security_flags: list[str] = field(default_factory=list)
-    approval_recommendation: str = "needs_review"  # "approve"|"request_changes"|"needs_review"
+    security_flags: list = field(default_factory=list)
+    approval_recommendation: str = "needs_review"
     overall_reasoning: str = ""
     escalation: EscalationDecision = field(
         default_factory=lambda: EscalationDecision(needs_escalation=False, reason="")
@@ -723,34 +694,26 @@ class CodeReviewResult:
     ai_confidence: float = 0.5
 
 
-# ---------------------------------------------------------------------------
-# Use case 8 — Supply Chain Exception Management
-# ---------------------------------------------------------------------------
-
-
 @dataclass
 class ExceptionEvent:
-    """Supply-chain exception input (Use case 8).
+    """Input payload for the supply-chain exception management pipeline (Use case 8).
 
-    Parameters
-    ----------
-    exception_type:
-        One of ``"late_delivery"``, ``"stockout"``, ``"supplier_failure"``,
-        ``"quality_hold"``, ``"demand_spike"``.
-    sku:
-        SKU or product identifier affected.
-    supplier:
-        Primary supplier name or ID.
-    severity:
-        ``"low"`` | ``"medium"`` | ``"high"`` | ``"critical"``
-    eta_days_late:
-        How many days late the shipment / replenishment is expected to be.
-    current_inventory:
-        Current on-hand stock quantity.
-    cost_to_expedite:
-        Estimated cost (base currency) to expedite the order.
-    notes:
-        Any free-text context from the supply chain team.
+    Usage example
+    -------------
+    .. code-block:: python
+
+        from src.models import ExceptionEvent
+
+        event = ExceptionEvent(
+            exception_type="late_delivery",
+            sku="SKU-12345",
+            supplier="SupplierA",
+            severity="high",
+            eta_days_late=14,
+            current_inventory=145,
+            cost_to_expedite=8500.0,
+        )
+        assert event.severity == "high"
     """
 
     exception_type: str
@@ -767,38 +730,31 @@ class ExceptionEvent:
 class ExceptionResponse:
     """Supply-chain exception management output (Use case 8).
 
-    Produced by :meth:`~src.orchestrator.business_orchestrator.BusinessOrchestrator.handle_exception`.
+    Contains the recommended action, financial impact estimate, alternative
+    suppliers, and draft purchase-order lines.
 
-    How to run
-    ----------
+    Usage example
+    -------------
     .. code-block:: python
 
-        from src.orchestrator.business_orchestrator import BusinessOrchestrator
-        from src.models import ExceptionEvent
+        from src.models import ExceptionResponse
 
-        event = ExceptionEvent(
+        resp = ExceptionResponse(
             exception_type="late_delivery",
             sku="SKU-12345",
-            supplier="SupplierA",
-            severity="high",
-            eta_days_late=14,
-            current_inventory=145,
-            cost_to_expedite=8500.0,
+            recommended_action="expedite",
+            financial_impact_estimate=8500.0,
+            alternative_suppliers=["SupplierB", "SupplierC"],
         )
-        orch = BusinessOrchestrator()
-        result = orch.handle_exception(event)
-        print(result.recommended_action)
-        print(f"Financial impact: ${result.financial_impact_estimate:,.0f}")
-
-    See ``docs/use_cases/08_supply_chain_exceptions.md`` for full documentation.
+        assert resp.recommended_action == "expedite"
     """
 
     exception_type: str
     sku: str
-    recommended_action: str          # "expedite"|"substitute"|"backorder"|"cancel"|"escalate"
+    recommended_action: str
     financial_impact_estimate: float = 0.0
-    alternative_suppliers: list[str] = field(default_factory=list)
-    draft_po_lines: list[str] = field(default_factory=list)
+    alternative_suppliers: list = field(default_factory=list)
+    draft_po_lines: list = field(default_factory=list)
     escalation: EscalationDecision = field(
         default_factory=lambda: EscalationDecision(needs_escalation=False, reason="")
     )
@@ -808,41 +764,33 @@ class ExceptionResponse:
     reasoning: str = ""
 
 
-# ---------------------------------------------------------------------------
-# Use case 9 — RFP Response Drafting
-# ---------------------------------------------------------------------------
-
-
 @dataclass
 class RFPResult:
     """RFP response drafting output (Use case 9).
 
-    Produced by :meth:`~src.orchestrator.business_orchestrator.BusinessOrchestrator.draft_rfp`.
+    Contains per-section drafts, a compliance matrix, win themes, risk flags,
+    and an overall bid strategy narrative.
 
-    How to run
-    ----------
+    Usage example
+    -------------
     .. code-block:: python
 
-        from src.orchestrator.business_orchestrator import BusinessOrchestrator
+        from src.models import RFPResult
 
-        rfp_text = open("rfp_document.txt").read()
-        orch = BusinessOrchestrator()
-        result = orch.draft_rfp(
-            rfp_text=rfp_text,
+        result = RFPResult(
             rfp_title="Enterprise Data Platform RFP — Acme Corp",
+            section_drafts={"Executive Summary": "Our platform delivers..."},
+            win_themes=["10-year track record", "SOC 2 Type II certified"],
+            risk_flags=["Unlimited liability clause in §12.3"],
         )
-        for section, draft in result.section_drafts.items():
-            print(f"## {section}\\n{draft}\\n")
-        print("Risk flags:", result.risk_flags)
-
-    See ``docs/use_cases/09_rfp_drafting.md`` for full documentation.
+        assert "risk_flags" in result.__dataclass_fields__
     """
 
     rfp_title: str
-    section_drafts: dict[str, str] = field(default_factory=dict)
-    compliance_matrix: dict[str, str] = field(default_factory=dict)
-    win_themes: list[str] = field(default_factory=list)
-    risk_flags: list[str] = field(default_factory=list)
+    section_drafts: dict = field(default_factory=dict)
+    compliance_matrix: dict = field(default_factory=dict)
+    win_themes: list = field(default_factory=list)
+    risk_flags: list = field(default_factory=list)
     overall_strategy: str = ""
     escalation: EscalationDecision = field(
         default_factory=lambda: EscalationDecision(needs_escalation=False, reason="")
@@ -850,3 +798,441 @@ class RFPResult:
     human_judgment: Optional[HumanJudgment] = None
     autonomy_used: AutonomyLevel = AutonomyLevel.AI_ASSISTS
     ai_confidence: float = 0.5
+
+
+# ---------------------------------------------------------------------------
+# Medical result types
+# ---------------------------------------------------------------------------
+
+_MEDICAL_DISCLAIMER: str = (
+    "AI-generated analysis only. Always requires validation by a licensed "
+    "healthcare professional before any clinical decision."
+)
+
+
+@dataclass
+class ClinicalAssessmentInput:
+    """Input payload for the clinical decision support pipeline (Medical use case 1).
+
+    Usage example
+    -------------
+    .. code-block:: python
+
+        from src.models import ClinicalAssessmentInput
+
+        inp = ClinicalAssessmentInput(
+            patient_summary="65 y/o male with T2DM and hypertension.",
+            symptoms=["chest pain", "shortness of breath"],
+            current_medications=["metformin 1000 mg", "lisinopril 10 mg"],
+            lab_values={"HbA1c": 8.1, "BP": "142/88"},
+            relevant_history="Prior MI in 2019",
+        )
+        assert "chest pain" in inp.symptoms
+    """
+
+    patient_summary: str
+    symptoms: list = field(default_factory=list)
+    current_medications: list = field(default_factory=list)
+    lab_values: dict = field(default_factory=dict)
+    relevant_history: str = ""
+
+
+@dataclass
+class ClinicalDecisionResult:
+    """Clinical decision support output (Medical use case 1).
+
+    .. warning::
+        AI-generated analysis only. A licensed physician MUST validate all
+        outputs before any clinical decision is made.
+
+    Usage example
+    -------------
+    .. code-block:: python
+
+        from src.models import ClinicalDecisionResult
+
+        result = ClinicalDecisionResult(
+            patient_summary="65 y/o male presenting with chest pain.",
+            differential_diagnoses=["ACS", "GERD", "Costochondritis"],
+            recommended_investigations=["ECG", "Troponin", "CXR"],
+            treatment_options=["ASA 325 mg", "GTN 0.4 mg SL"],
+            red_flags=["ST elevation on ECG"],
+        )
+        assert result.autonomy_used.value == "human_first"
+    """
+
+    MEDICAL_DISCLAIMER: ClassVar[str] = _MEDICAL_DISCLAIMER
+
+    patient_summary: str
+    differential_diagnoses: list = field(default_factory=list)
+    recommended_investigations: list = field(default_factory=list)
+    treatment_options: list = field(default_factory=list)
+    red_flags: list = field(default_factory=list)
+    guideline_references: list = field(default_factory=list)
+    escalation: EscalationDecision = field(
+        default_factory=lambda: EscalationDecision(
+            needs_escalation=True,
+            reason="Clinical decision requires physician review",
+            urgency="immediate",
+            checkpoint="Physician must validate before acting",
+        )
+    )
+    human_judgment: Optional[HumanJudgment] = None
+    autonomy_used: AutonomyLevel = AutonomyLevel.HUMAN_FIRST
+    ai_confidence: float = 0.5
+    disclaimer: str = field(default=_MEDICAL_DISCLAIMER)
+
+
+@dataclass
+class DrugInteractionResult:
+    """Drug interaction analysis output (Medical use case 2).
+
+    .. warning::
+        AI-generated analysis only. A pharmacist or physician MUST validate
+        all outputs before any prescribing or dispensing decision.
+
+    Usage example
+    -------------
+    .. code-block:: python
+
+        from src.models import DrugInteractionResult
+
+        result = DrugInteractionResult(
+            medications=["warfarin", "aspirin", "amiodarone"],
+            interactions=["warfarin + aspirin: increased bleeding risk"],
+            severity_summary="Two major interactions identified.",
+        )
+        assert len(result.interactions) > 0
+    """
+
+    MEDICAL_DISCLAIMER: ClassVar[str] = _MEDICAL_DISCLAIMER
+
+    medications: list
+    interactions: list = field(default_factory=list)
+    contraindications: list = field(default_factory=list)
+    dosing_notes: list = field(default_factory=list)
+    severity_summary: str = ""
+    escalation: EscalationDecision = field(
+        default_factory=lambda: EscalationDecision(
+            needs_escalation=True,
+            reason="Drug interactions require pharmacist/physician review",
+            urgency="immediate",
+            checkpoint="Pharmacist must validate",
+        )
+    )
+    human_judgment: Optional[HumanJudgment] = None
+    autonomy_used: AutonomyLevel = AutonomyLevel.AI_PROPOSES
+    ai_confidence: float = 0.5
+    disclaimer: str = field(default=_MEDICAL_DISCLAIMER)
+
+
+@dataclass
+class LiteratureSynthesisResult:
+    """Medical literature synthesis output (Medical use case 3).
+
+    Synthesises evidence from research papers and clinical guidelines to
+    answer a clinical or research question.
+
+    Usage example
+    -------------
+    .. code-block:: python
+
+        from src.models import LiteratureSynthesisResult
+
+        result = LiteratureSynthesisResult(
+            query="Efficacy of SGLT2 inhibitors in HFrEF",
+            synthesis="SGLT2 inhibitors reduce HF hospitalisation by ~25%.",
+            key_findings=["DAPA-HF trial: dapagliflozin NNT=21"],
+            evidence_quality="high",
+        )
+        assert result.evidence_quality == "high"
+    """
+
+    query: str
+    synthesis: str
+    key_findings: list = field(default_factory=list)
+    evidence_quality: str = ""
+    conflicting_evidence: list = field(default_factory=list)
+    recommended_reading: list = field(default_factory=list)
+    escalation: EscalationDecision = field(
+        default_factory=lambda: EscalationDecision(
+            needs_escalation=False,
+            reason="",
+            urgency="informational",
+            checkpoint="",
+        )
+    )
+    human_judgment: Optional[HumanJudgment] = None
+    autonomy_used: AutonomyLevel = AutonomyLevel.AI_ASSISTS
+    ai_confidence: float = 0.5
+
+
+@dataclass
+class PatientRiskInput:
+    """Input payload for the patient risk stratification pipeline (Medical use case 4).
+
+    Usage example
+    -------------
+    .. code-block:: python
+
+        from src.models import PatientRiskInput
+
+        inp = PatientRiskInput(
+            patient_id="PT-00421",
+            age=72,
+            diagnoses=["T2DM", "CKD stage 3", "hypertension"],
+            medications=["metformin", "amlodipine"],
+            recent_vitals={"systolic_bp": 148, "eGFR": 42},
+        )
+        assert inp.age == 72
+    """
+
+    patient_id: str
+    age: int
+    diagnoses: list = field(default_factory=list)
+    medications: list = field(default_factory=list)
+    recent_vitals: dict = field(default_factory=dict)
+    social_determinants: dict = field(default_factory=dict)
+
+
+@dataclass
+class PatientRiskResult:
+    """Patient risk stratification output (Medical use case 4).
+
+    .. warning::
+        AI-generated analysis only. A licensed clinician MUST review all
+        outputs before initiating any care intervention.
+
+    Usage example
+    -------------
+    .. code-block:: python
+
+        from src.models import PatientRiskResult
+
+        result = PatientRiskResult(
+            patient_id="PT-00421",
+            risk_level="high",
+            risk_factors=["eGFR declining", "uncontrolled hypertension"],
+            recommended_interventions=["Nephrology referral within 4 weeks"],
+            follow_up_timeline="4 weeks",
+        )
+        assert result.risk_level == "high"
+    """
+
+    MEDICAL_DISCLAIMER: ClassVar[str] = _MEDICAL_DISCLAIMER
+
+    patient_id: str
+    risk_level: str = "moderate"
+    risk_factors: list = field(default_factory=list)
+    recommended_interventions: list = field(default_factory=list)
+    follow_up_timeline: str = ""
+    care_gaps: list = field(default_factory=list)
+    escalation: EscalationDecision = field(
+        default_factory=lambda: EscalationDecision(needs_escalation=False, reason="")
+    )
+    human_judgment: Optional[HumanJudgment] = None
+    autonomy_used: AutonomyLevel = AutonomyLevel.AI_PROPOSES
+    ai_confidence: float = 0.5
+    disclaimer: str = field(default=_MEDICAL_DISCLAIMER)
+
+
+@dataclass
+class HealthcareGapResult:
+    """Healthcare access gap analysis output (Medical use case 5).
+
+    Identifies systemic gaps in healthcare access for a region or population
+    and recommends policy interventions.
+
+    Usage example
+    -------------
+    .. code-block:: python
+
+        from src.models import HealthcareGapResult
+
+        result = HealthcareGapResult(
+            region_or_population="Rural Appalachia",
+            identified_gaps=["No oncology within 90 miles", "1 primary care per 2,800"],
+            affected_population_estimate="~340,000 residents",
+        )
+        assert result.identified_gaps != []
+    """
+
+    region_or_population: str
+    identified_gaps: list = field(default_factory=list)
+    affected_population_estimate: str = ""
+    root_causes: list = field(default_factory=list)
+    recommended_interventions: list = field(default_factory=list)
+    policy_implications: list = field(default_factory=list)
+    data_sources: list = field(default_factory=list)
+    escalation: EscalationDecision = field(
+        default_factory=lambda: EscalationDecision(needs_escalation=False, reason="")
+    )
+    human_judgment: Optional[HumanJudgment] = None
+    autonomy_used: AutonomyLevel = AutonomyLevel.AI_ASSISTS
+    ai_confidence: float = 0.5
+
+
+@dataclass
+class GenomicRiskResult:
+    """Genomic risk analysis output (Medical use case 6).
+
+    .. warning::
+        AI-generated analysis only. A certified genetic counsellor MUST review
+        all outputs before any clinical or reproductive decision is made.
+
+    Usage example
+    -------------
+    .. code-block:: python
+
+        from src.models import GenomicRiskResult
+
+        result = GenomicRiskResult(
+            sample_id="GS-20240301-0042",
+            analyzed_variants=["BRCA1 c.5266dupC (pathogenic)"],
+            disease_risk_scores={"breast_cancer_lifetime": 0.72},
+            pharmacogenomic_notes=["CYP2D6 poor metaboliser — avoid codeine"],
+            genetic_counseling_needed=True,
+        )
+        assert result.genetic_counseling_needed is True
+    """
+
+    MEDICAL_DISCLAIMER: ClassVar[str] = _MEDICAL_DISCLAIMER
+
+    sample_id: str
+    analyzed_variants: list = field(default_factory=list)
+    disease_risk_scores: dict = field(default_factory=dict)
+    pharmacogenomic_notes: list = field(default_factory=list)
+    recommended_screenings: list = field(default_factory=list)
+    genetic_counseling_needed: bool = True
+    escalation: EscalationDecision = field(
+        default_factory=lambda: EscalationDecision(
+            needs_escalation=True,
+            reason="Genomic results require genetic counselor review",
+            urgency="review",
+            checkpoint="Genetic counselor consult required",
+        )
+    )
+    human_judgment: Optional[HumanJudgment] = None
+    autonomy_used: AutonomyLevel = AutonomyLevel.HUMAN_FIRST
+    ai_confidence: float = 0.5
+    disclaimer: str = field(default=_MEDICAL_DISCLAIMER)
+
+
+@dataclass
+class MentalHealthTriageResult:
+    """Mental health triage output (Medical use case 7).
+
+    .. warning::
+        AI-generated analysis only. A licensed mental health clinician MUST
+        review all outputs before any intervention is initiated.
+
+    Usage example
+    -------------
+    .. code-block:: python
+
+        from src.models import MentalHealthTriageResult
+
+        result = MentalHealthTriageResult(
+            presenting_concerns="Persistent low mood, social withdrawal, sleep changes.",
+            risk_level="moderate",
+            recommended_resources=["PHQ-9 screening", "CBT referral"],
+            follow_up_urgency="within_48h",
+        )
+        assert result.risk_level == "moderate"
+    """
+
+    MEDICAL_DISCLAIMER: ClassVar[str] = _MEDICAL_DISCLAIMER
+
+    presenting_concerns: str
+    risk_level: str = "low"
+    recommended_resources: list = field(default_factory=list)
+    crisis_indicators: list = field(default_factory=list)
+    suggested_interventions: list = field(default_factory=list)
+    follow_up_urgency: str = "routine"
+    escalation: EscalationDecision = field(
+        default_factory=lambda: EscalationDecision(
+            needs_escalation=True,
+            reason="Mental health triage requires clinician review",
+            urgency="review",
+            checkpoint="Clinician must review before any intervention",
+        )
+    )
+    human_judgment: Optional[HumanJudgment] = None
+    autonomy_used: AutonomyLevel = AutonomyLevel.HUMAN_FIRST
+    ai_confidence: float = 0.5
+    disclaimer: str = field(default=_MEDICAL_DISCLAIMER)
+
+
+@dataclass
+class ClinicalTrialMatch:
+    """A single clinical trial matched to a patient profile (Medical use case 8).
+
+    Usage example
+    -------------
+    .. code-block:: python
+
+        from src.models import ClinicalTrialMatch
+
+        match = ClinicalTrialMatch(
+            trial_id="NCT05123456",
+            title="Phase III SGLT2 inhibitor in CKD",
+            eligibility_match="strong",
+            key_criteria_met=["eGFR 20-45", "T2DM diagnosis"],
+            phase="Phase III",
+            sponsor="AstraZeneca",
+            contact_url="https://clinicaltrials.gov/ct2/show/NCT05123456",
+        )
+        assert match.eligibility_match == "strong"
+    """
+
+    trial_id: str
+    title: str
+    eligibility_match: str
+    key_criteria_met: list = field(default_factory=list)
+    key_criteria_missed: list = field(default_factory=list)
+    phase: str = ""
+    sponsor: str = ""
+    contact_url: str = ""
+
+
+@dataclass
+class ClinicalTrialsResult:
+    """Clinical trials matching output (Medical use case 8).
+
+    .. warning::
+        AI-generated analysis only. A physician or principal investigator MUST
+        confirm eligibility before any patient is enrolled in a trial.
+
+    Usage example
+    -------------
+    .. code-block:: python
+
+        from src.models import ClinicalTrialsResult, ClinicalTrialMatch
+
+        result = ClinicalTrialsResult(
+            patient_summary="72 y/o with CKD stage 3 and T2DM.",
+            matched_trials=[
+                ClinicalTrialMatch("NCT05123456", "SGLT2 in CKD", "strong")
+            ],
+            total_searched=120,
+        )
+        assert len(result.matched_trials) == 1
+    """
+
+    MEDICAL_DISCLAIMER: ClassVar[str] = _MEDICAL_DISCLAIMER
+
+    patient_summary: str
+    matched_trials: list = field(default_factory=list)
+    total_searched: int = 0
+    escalation: EscalationDecision = field(
+        default_factory=lambda: EscalationDecision(
+            needs_escalation=True,
+            reason="Trial eligibility requires physician/PI confirmation",
+            urgency="review",
+            checkpoint="PI must confirm eligibility",
+        )
+    )
+    human_judgment: Optional[HumanJudgment] = None
+    autonomy_used: AutonomyLevel = AutonomyLevel.AI_PROPOSES
+    ai_confidence: float = 0.5
+    disclaimer: str = field(default=_MEDICAL_DISCLAIMER)
